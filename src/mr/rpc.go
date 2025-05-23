@@ -6,24 +6,48 @@ package mr
 // remember to capitalize all names.
 //
 
-import "os"
+import (
+	"fmt"
+	"os"
+	"time"
+)
 import "strconv"
-
-//
-// example to show how to declare the arguments
-// and reply for an RPC.
-//
-
-type ExampleArgs struct {
-	X int
-}
-
-type ExampleReply struct {
-	Y int
-}
 
 // Add your RPC definitions here.
 
+type WorkerPingArgs struct {
+	WorkerId int
+	TraceId  string
+	State    string
+	// for successfully finished map/reduce tasks
+	MapNumber    int
+	ReduceNumber int
+}
+
+func (args *WorkerPingArgs) String() string {
+	return fmt.Sprintf("{worker id=%d trace id=%s state=%s mapNumber=%d reduceNumber=%d}",
+		args.WorkerId, args.TraceId, args.State, args.MapNumber, args.ReduceNumber)
+}
+
+// Reply from coordinator
+type WorkerPingReply struct {
+	TraceId string
+	Order   string
+	R       int // reduce partition constant
+	// for assigning map/reduce tasks to workers
+	MapNumber    int
+	MapFile      string
+	ReduceNumber int
+}
+
+func (reply *WorkerPingReply) String() string {
+	return fmt.Sprintf("{trace id=%s order=%s R=%d mapNumber=%d mapFile=%s reduceNumber=%d}",
+		reply.TraceId, reply.Order, reply.R, reply.MapNumber, reply.MapFile, reply.ReduceNumber)
+}
+
+func generateTraceId() string {
+	return strconv.FormatInt(time.Now().UnixNano(), 10) + strconv.Itoa(os.Getpid())
+}
 
 // Cook up a unique-ish UNIX-domain socket name
 // in /var/tmp, for the coordinator.

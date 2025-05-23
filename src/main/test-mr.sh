@@ -40,6 +40,7 @@ rm -f mr-out*
 
 echo '***' Starting wc test.
 
+# timeout after 180s, then sends SIGTERM, waits for 2s, then sends SIGKILL
 timeout -k 2s 180s ../mrcoordinator ../pg*txt &
 pid=$!
 

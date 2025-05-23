@@ -1,10 +1,14 @@
 package mr
 
-import "fmt"
+import (
+	"fmt"
+	"os"
+	"sync"
+	"time"
+)
 import "log"
 import "net/rpc"
 import "hash/fnv"
-
 
 //
 // Map functions return a slice of KeyValue.
@@ -24,41 +28,92 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
+type WorkerInstance struct {
+	id           int
+	state        string
+	mu           sync.Mutex
+	mapNumber    int
+	reduceNumber int
+}
+
+var wi = new(WorkerInstance)
 
 //
 // main/mrworker.go calls this function.
 //
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
+	configLog()
 
-	// Your worker implementation here.
+	wi.id = os.Getpid()
+	wi.state = "idle"
 
-	// uncomment to send the Example RPC to the coordinator.
-	// CallExample()
+	log.Printf("Start worker: %s", wi)
+	wg := sync.WaitGroup{}
+	wg.Add(1)
 
-}
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
 
-//
-// example function to show how to make an RPC call to the coordinator.
-//
-// the RPC argument and reply types are defined in rpc.go.
-//
-func CallExample() {
+		for {
+			<-ticker.C
 
-	// declare an argument structure.
-	args := ExampleArgs{}
+			args := new(WorkerPingArgs)
+			wi.mu.Lock()
+			args.State = wi.state
+			args.MapNumber = wi.mapNumber
+			args.ReduceNumber = wi.reduceNumber
+			wi.mu.Unlock()
+			args.WorkerId = wi.id
+			args.TraceId = generateTraceId()
 
-	// fill in the argument(s).
-	args.X = 99
+			reply := new(WorkerPingReply)
+			log.Printf("worker ping args = %s", args)
+			call("Coordinator.HandleWorkerPing", args, reply)
+			log.Printf("worker ping reply = %s", reply)
 
-	// declare a reply structure.
-	reply := ExampleReply{}
+			wi.mu.Lock()
+			if reply.Order == "map" {
+				wi.mapNumber = reply.MapNumber
+			}
+			if reply.Order == "reduce" {
+				wi.reduceNumber = reply.ReduceNumber
+			}
+			if reply.Order != "pong" {
+				wi.state = reply.Order
+			}
+			wi.mu.Unlock()
 
-	// send the RPC request, wait for the reply.
-	call("Coordinator.Example", &args, &reply)
+			// TODO
+			switch reply.Order {
+			case "map":
+				go func() {
+					log.Printf("Start map task %d, map file = %s", reply.MapNumber, reply.MapFile)
+					time.Sleep(time.Second * 2)
+					log.Printf("Finish map task %d", reply.MapNumber)
+					wi.mu.Lock()
+					defer wi.mu.Unlock()
+					wi.state = "map-done"
+				}()
+			case "reduce":
+				go func() {
+					log.Printf("Start reduce task %d", reply.ReduceNumber)
+					time.Sleep(time.Second * 2)
+					log.Printf("Finish reduce task %d", reply.ReduceNumber)
+					wi.mu.Lock()
+					defer wi.mu.Unlock()
+					wi.state = "reduce-done"
+				}()
+			case "exit":
+				log.Printf("Exit order from coordinator")
+				wg.Done()
+			}
+		}
+	}()
 
-	// reply.Y should be 100.
-	fmt.Printf("reply.Y %v\n", reply.Y)
+	wg.Wait()
+	log.Printf("Worker %v exit", wi.id)
 }
 
 //
