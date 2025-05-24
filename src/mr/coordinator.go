@@ -10,11 +10,11 @@ import "os"
 import "net/rpc"
 import "net/http"
 
-type WorkerStatus struct {
-	id         int
-	state      string
-	lastTalkAt time.Time
-}
+//type WorkerStatus struct {
+//	id         int
+//	state      string
+//	lastTalkAt time.Time
+//}
 
 type MapTask struct {
 	id             int
@@ -33,14 +33,16 @@ type ReduceTask struct {
 
 type Coordinator struct {
 	// Your definitions here.
-	mu sync.Mutex
 
 	// these 2 fields are just for Done() function
 	done      bool
 	doneMutex sync.Mutex
 
+	mu sync.Mutex // global mutex for all the state mutations below
+
 	finWait   bool
 	finWaitAt time.Time
+	M         int // map partition constant
 	R         int // reduce partition constant
 	//workers map[int]*WorkerStatus
 	numMap      int
@@ -67,25 +69,65 @@ func (c *Coordinator) getNewReduceTask() *ReduceTask {
 	return nil
 }
 
+func (c *Coordinator) timeoutAssignedTasks() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.finWait {
+		return
+	}
+
+	start := time.Now()
+	defer func() {
+		elapsed := time.Since(start)
+		log.Printf("Checking timeout assigned tasks takes %.3f seconds", elapsed.Seconds())
+	}()
+
+	now := time.Now()
+
+	if c.numMap > 0 {
+		for _, task := range c.MapTasks {
+			if task.assigned && !task.done && now.Sub(task.lastAssignedAt) > ASSIGNED_TASKS_TIMEOUT {
+				task.assigned = false
+				log.Printf("Map task %v timeout, revoke assignment", task.id)
+			}
+		}
+	}
+
+	if c.numMap == 0 && c.numReduce > 0 {
+		for _, task := range c.ReduceTasks {
+			if task.assigned && !task.done && now.Sub(task.lastAssignedAt) > ASSIGNED_TASKS_TIMEOUT {
+				task.assigned = false
+				log.Printf("Reduce task %v timeout, revoke assignment", task.id)
+			}
+		}
+	}
+}
+
 // Your code here -- RPC handlers for the worker to call.
 
 func (c *Coordinator) HandleWorkerPing(args *WorkerPingArgs, reply *WorkerPingReply) error {
+	start := time.Now()
+	defer func() {
+		elapsed := time.Since(start)
+		log.Printf("Handle request (trace id = %v) takes %.3f seconds", args.TraceId, elapsed.Seconds())
+	}()
 	// just make coordinator single-threaded (like Redis), since coordinator won't be a bottleneck
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	log.Printf("worker ping args = %s", args)
 	reply.R = c.R
+	reply.M = c.M
 	reply.TraceId = args.TraceId
 
 	switch args.State {
 	case "idle":
 		if c.numMap > 0 {
-			// TODO: periodically (background job) reset assigned but un-finished tasks (10s timeout time) to un-assigned
 			task := c.getNewMapTask()
 			if task != nil {
 				reply.Order = "map"
 				task.assigned = true
+				task.lastAssignedAt = time.Now()
 				reply.MapFile = task.file
 				reply.MapNumber = task.id
 				log.Printf("Assign map task %d to worker %d", task.id, args.WorkerId)
@@ -98,6 +140,7 @@ func (c *Coordinator) HandleWorkerPing(args *WorkerPingArgs, reply *WorkerPingRe
 			if task != nil {
 				reply.Order = "reduce"
 				task.assigned = true
+				task.lastAssignedAt = time.Now()
 				reply.ReduceNumber = task.id
 				log.Printf("Assign reduce task %d to worker %d", task.id, args.WorkerId)
 			} else {
@@ -142,9 +185,8 @@ func (c *Coordinator) HandleWorkerPing(args *WorkerPingArgs, reply *WorkerPingRe
 			c.finWaitAt = time.Now()
 			log.Printf("All reduce tasks finished, entering fin wait stage")
 			go func() {
-				delay := 10 * time.Second
-				log.Printf("Coordinator will shutdown in %v seconds", delay)
-				afterChan := time.After(delay)
+				log.Printf("Coordinator will shutdown in %v seconds", FIN_WAIT_DURATION)
+				afterChan := time.After(FIN_WAIT_DURATION)
 				<-afterChan
 
 				c.doneMutex.Lock()
@@ -162,11 +204,11 @@ func (c *Coordinator) HandleWorkerPing(args *WorkerPingArgs, reply *WorkerPingRe
 // start a thread that listens for RPCs from worker.go
 //
 func (c *Coordinator) server() {
-	rpc.Register(c)
+	_ = rpc.Register(c)
 	rpc.HandleHTTP()
 	//l, e := net.Listen("tcp", ":1234")
 	sockname := coordinatorSock()
-	os.Remove(sockname)
+	_ = os.Remove(sockname)
 	l, e := net.Listen("unix", sockname)
 	if e != nil {
 		log.Fatal("listen error:", e)
@@ -191,12 +233,23 @@ func (c *Coordinator) Done() bool {
 //
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	configLog()
+
+	if _, err := os.Stat(TEMP_FOLDER); os.IsNotExist(err) {
+		err := os.Mkdir(TEMP_FOLDER, os.ModePerm)
+		if err != nil {
+			log.Fatalf("create temp folder failed: %v", err)
+		} else {
+			log.Printf("Create temp folder: %s", TEMP_FOLDER)
+		}
+	}
+
 	log.Printf("Make coordinator with args: %d files = %v, nReduce = %v", len(files), files, nReduce)
 
 	c := Coordinator{}
-	c.numMap = len(files)
+	c.M = len(files)
 	c.R = nReduce
-	c.numReduce = nReduce
+	c.numMap = c.M
+	c.numReduce = c.R
 	c.MapTasks = make([]*MapTask, c.numMap)
 	c.ReduceTasks = make([]*ReduceTask, c.R)
 
@@ -210,5 +263,16 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 
 	c.server()
 	log.Printf("Coordinator starts, entering map stage")
+
+	go func() {
+		// periodically reset assigned but un-finished tasks to un-assigned
+		ticker := time.NewTicker(SERVER_CKECK_TIMEOUT_ASSIGNED_TASKS_FREQUENCY)
+		defer ticker.Stop()
+		for {
+			<-ticker.C
+			c.timeoutAssignedTasks()
+		}
+	}()
+
 	return &c
 }

@@ -25,14 +25,15 @@ type WorkerPingArgs struct {
 }
 
 func (args *WorkerPingArgs) String() string {
-	return fmt.Sprintf("{worker id=%d trace id=%s state=%s mapNumber=%d reduceNumber=%d}",
-		args.WorkerId, args.TraceId, args.State, args.MapNumber, args.ReduceNumber)
+	return fmt.Sprintf("{traceId=%s state=%s mapNumber=%d reduceNumber=%d}",
+		args.TraceId, args.State, args.MapNumber, args.ReduceNumber)
 }
 
 // Reply from coordinator
 type WorkerPingReply struct {
 	TraceId string
 	Order   string
+	M       int // map partition constant
 	R       int // reduce partition constant
 	// for assigning map/reduce tasks to workers
 	MapNumber    int
@@ -41,12 +42,12 @@ type WorkerPingReply struct {
 }
 
 func (reply *WorkerPingReply) String() string {
-	return fmt.Sprintf("{trace id=%s order=%s R=%d mapNumber=%d mapFile=%s reduceNumber=%d}",
-		reply.TraceId, reply.Order, reply.R, reply.MapNumber, reply.MapFile, reply.ReduceNumber)
+	return fmt.Sprintf("{traceId=%s order=%s mapNumber=%d mapFile=%s reduceNumber=%d}",
+		reply.TraceId, reply.Order, reply.MapNumber, reply.MapFile, reply.ReduceNumber)
 }
 
 func generateTraceId() string {
-	return strconv.FormatInt(time.Now().UnixNano(), 10) + strconv.Itoa(os.Getpid())
+	return strconv.Itoa(os.Getpid()) + "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 }
 
 // Cook up a unique-ish UNIX-domain socket name
