@@ -266,7 +266,7 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 
 	go func() {
 		// periodically reset assigned but un-finished tasks to un-assigned
-		ticker := time.NewTicker(SERVER_CKECK_TIMEOUT_ASSIGNED_TASKS_FREQUENCY)
+		ticker := time.NewTicker(SERVER_CHECK_TIMEOUT_ASSIGNED_TASKS_FREQUENCY)
 		defer ticker.Stop()
 		for {
 			<-ticker.C

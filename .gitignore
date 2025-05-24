@@ -5,3 +5,4 @@ api.key
 .idea
 src/main/mr-*
 commands
+app.log
