@@ -1,10 +1,12 @@
 # MIT 6.824
 
+Course website: http://nil.csail.mit.edu/6.824/2021/schedule.html
+
 Click the "Report" column to see the report of each lab, which includes how I designed the architecture and the experiences learned in the lab.
 
 Checkout the corresponding tag to see the final code of each lab.
 
-| Lab # | Code       | All tests passed | Report               |
-| ----- | ---------- | ---------------- | -------------------- |
-| Lab 1 | `lab1` tag | ✅                | [lab1.md](./lab1.md) |
+| Lab # | Topic     | Code       | All tests passed | Report               |
+| ----- | --------- | ---------- | ---------------- | -------------------- |
+| Lab 1 | MapReduce | `lab1` tag | ✅                | [lab1.md](./lab1.md) |
 
