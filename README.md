@@ -6,7 +6,8 @@ Click the "Report" column to see the report of each lab, which includes how I de
 
 Checkout the corresponding tag to see the final code of each lab.
 
-| Lab # | Topic     | Code       | All tests passed | Report               |
-| ----- | --------- | ---------- | ---------------- | -------------------- |
-| Lab 1 | MapReduce | `lab1` tag | ✅                | [lab1.md](./lab1.md) |
+| Lab #  | Topic                | Code        | All tests passed | Report                 |
+| ------ | -------------------- | ----------- | ---------------- | ---------------------- |
+| Lab 1  | MapReduce            | `lab1` tag  | ✅                | [lab1.md](./lab1.md)   |
+| Lab 2A | Raft leader election | `lab2a` tag | ✅                | [lab2a.md](./lab2a.md) |
 

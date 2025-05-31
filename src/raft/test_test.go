@@ -19,6 +19,12 @@ import "sync"
 // (much more than the paper's range of timeouts).
 const RaftElectionTimeout = 1000 * time.Millisecond
 
+func out(s string) {
+	if ENABLE_TEST_VERBOSE {
+		fmt.Println(s)
+	}
+}
+
 func TestInitialElection2A(t *testing.T) {
 	servers := 3
 	cfg := make_config(t, servers, false, false)
@@ -58,15 +64,18 @@ func TestReElection2A(t *testing.T) {
 	cfg.begin("Test (2A): election after network failure")
 
 	leader1 := cfg.checkOneLeader()
+	out("1")
 
 	// if the leader disconnects, a new one should be elected.
 	cfg.disconnect(leader1)
 	cfg.checkOneLeader()
+	out("2")
 
 	// if the old leader rejoins, that shouldn't
 	// disturb the new leader.
 	cfg.connect(leader1)
 	leader2 := cfg.checkOneLeader()
+	out("3")
 
 	// if there's no quorum, no leader should
 	// be elected.
@@ -74,16 +83,20 @@ func TestReElection2A(t *testing.T) {
 	cfg.disconnect((leader2 + 1) % servers)
 	time.Sleep(2 * RaftElectionTimeout)
 	cfg.checkNoLeader()
+	out("4")
 
 	// if a quorum arises, it should elect a leader.
 	cfg.connect((leader2 + 1) % servers)
 	cfg.checkOneLeader()
+	out("5")
 
 	// re-join of last node shouldn't prevent leader from existing.
 	cfg.connect(leader2)
 	cfg.checkOneLeader()
+	out("6")
 
 	cfg.end()
+	out("7")
 }
 
 func TestManyElections2A(t *testing.T) {
@@ -96,7 +109,10 @@ func TestManyElections2A(t *testing.T) {
 	cfg.checkOneLeader()
 
 	iters := 10
+	out(fmt.Sprintf("Total %d rounds", iters))
 	for ii := 1; ii < iters; ii++ {
+		out(fmt.Sprintf("round %d start", ii))
+
 		// disconnect three nodes
 		i1 := rand.Int() % servers
 		i2 := rand.Int() % servers
@@ -104,6 +120,7 @@ func TestManyElections2A(t *testing.T) {
 		cfg.disconnect(i1)
 		cfg.disconnect(i2)
 		cfg.disconnect(i3)
+		out(fmt.Sprintf("disconnect %d, %d, %d", i1, i2, i3))
 
 		// either the current leader should still be alive,
 		// or the remaining four should elect a new one.
@@ -112,6 +129,7 @@ func TestManyElections2A(t *testing.T) {
 		cfg.connect(i1)
 		cfg.connect(i2)
 		cfg.connect(i3)
+		out(fmt.Sprintf("round %d done", ii))
 	}
 
 	cfg.checkOneLeader()

@@ -17,15 +17,17 @@ const TICKER_FREQUENCY = time.Millisecond * 1
 
 const LOG_TO_FILE = false
 
+const ENABLE_TEST_VERBOSE = false
+
 /////////////////////////// follower parameters ///////////////////////////////
 
 const ELECTION_TIMEOUT_MIN_TIME_MS = 500
-const ELECTION_TIMEOUT_MAX_TIME_MS = 1500
+const ELECTION_TIMEOUT_MAX_TIME_MS = 1000
 
 /////////////////////////// leader parameters /////////////////////////////////
 
 // "the tester limits you to 10 heartbeats per second"
-const HEARTBEAT_FERQUENCY = time.Millisecond * 113
+const HEARTBEAT_FERQUENCY = time.Millisecond * 107
 
 ///////////////////////////////////////////////////////////////////////////////
 

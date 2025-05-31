@@ -66,6 +66,7 @@ type Raft struct {
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
+
 	state             string
 	currentTerm       int
 	votedFor          int // use -1 as null
@@ -82,6 +83,7 @@ func (rf *Raft) GetState() (int, bool) {
 	defer rf.mu.Unlock()
 	term := rf.currentTerm
 	isLeader := rf.state == STATE_LEADER
+	//log.Printf("inst %v: term:%v state:%v", rf.me, rf.currentTerm, rf.state)
 	return term, isLeader
 }
 
@@ -182,7 +184,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	if args.Term > rf.currentTerm {
 		//if rf.state != STATE_FOLLOWER {
-		log.Printf("RV Req: inst %d: %v becomes follower because candidate (inst %d) with higher term: %d -> %d",
+		log.Printf("inst %d: RV Req: %v becomes follower because candidate (inst %d) with higher term: %d -> %d",
 			rf.me, rf.state, args.CandidateId, rf.currentTerm, args.Term)
 		//}
 		rf.currentTerm = args.Term
@@ -227,7 +229,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	if args.Term > rf.currentTerm {
 		//if rf.state != STATE_FOLLOWER {
-		log.Printf("AE Req: inst %d: %v becomes follower because leader (inst %d) with higher term: %d -> %d",
+		log.Printf("inst %d: AE Req: %v becomes follower because leader (inst %d) with higher term: %d -> %d",
 			rf.me, rf.state, args.LeaderId, rf.currentTerm, args.Term)
 		//}
 		rf.currentTerm = args.Term
@@ -337,7 +339,6 @@ func (rf *Raft) electionTimeoutTicker() {
 
 		// Although time.Sleep() can not timeout at exactly rf.electionTimeoutAt,
 		// it is significantly simpler using time.Sleep() than using time.ticker().
-		// Besides, this difference can be treated as extra randomness added to election timeout.
 		time.Sleep(TICKER_FREQUENCY)
 
 		rf.mu.Lock()
@@ -353,15 +354,21 @@ func (rf *Raft) electionTimeoutTicker() {
 		}
 
 		// start election as candidate
-		log.Printf("inst %d: follower becomes candidate at term %d", rf.me, rf.currentTerm)
 		rf.state = STATE_CANDIDATE
 		rf.currentTerm++
 		rf.votedFor = rf.me
+		log.Printf("inst %d: ticker: follower becomes candidate at a new term %d", rf.me, rf.currentTerm)
 
 		timeout := time.After(getElectionTimeoutDuration() * time.Millisecond)
 
+		// Get a majority vote is enough to be elected as the new leader, but a waitGroup can not
+		// Done() more than Add(), otherwise there is a 'panic: sync: negative WaitGroup counter'.
+		// So we need to use a counter to prevent this from happening.
+		voteCount := new(int)
+		*voteCount = len(rf.peers) / 2
+		var voteCountMutex sync.Mutex
 		var wg sync.WaitGroup
-		wg.Add(len(rf.peers) / 2)
+		wg.Add(*voteCount)
 		electionSuccess := make(chan struct{})
 
 		go func() {
@@ -399,20 +406,23 @@ func (rf *Raft) electionTimeoutTicker() {
 				}
 
 				if reply.Term > rf.currentTerm {
-					log.Printf("RV Resp: inst %d: candidate becomes follower because higher term: %d -> %d",
+					log.Printf("inst %d: RV Resp: candidate becomes follower because higher term: %d -> %d",
 						rf.me, rf.currentTerm, reply.Term)
 					rf.currentTerm = reply.Term
 					rf.votedFor = -1
 					rf.electionTimeoutAt = getNextElectionTimeout()
 					rf.state = STATE_FOLLOWER
 					return
-				} else if reply.Term < rf.currentTerm { // an outdated reply
-
-					return
 				}
 
-				if reply.VoteGranted {
-					wg.Done()
+				// the term should be the same to be a valid vote
+				if args.Term == reply.Term && reply.VoteGranted {
+					voteCountMutex.Lock()
+					if *voteCount > 0 {
+						*voteCount--
+						wg.Done()
+					}
+					voteCountMutex.Unlock()
 				}
 			}()
 		}
@@ -424,15 +434,18 @@ func (rf *Raft) electionTimeoutTicker() {
 			rf.mu.Lock()
 
 			if rf.state != STATE_CANDIDATE {
+				rf.mu.Unlock()
 				continue
 			}
 
-			log.Printf("inst %d: candidate election timeout at term %d. Start a new one", rf.me, rf.currentTerm)
+			log.Printf("inst %d: ticker: candidate election at term %d timeouts (lacking %d votes). Start a new one",
+				rf.me, term, *voteCount)
+
 			// Although it shouldn't be a follower as in Figure 2, but for the convenience of coding, let's do this.
 			// Since we set election timeout at now, it won't wait too much time
+			rf.electionTimeoutAt = time.Now()
 			rf.state = STATE_FOLLOWER
 			rf.votedFor = -1
-			rf.electionTimeoutAt = time.Now()
 
 			rf.mu.Unlock()
 
@@ -440,21 +453,68 @@ func (rf *Raft) electionTimeoutTicker() {
 			rf.mu.Lock()
 
 			if rf.state != STATE_CANDIDATE {
+				rf.mu.Unlock()
 				continue
 			}
 
-			log.Printf("inst %d: candidate becomes leader at term %d", rf.me, rf.currentTerm)
+			log.Printf("inst %d: ticker: candidate becomes leader at term %d", rf.me, rf.currentTerm)
 			rf.state = STATE_LEADER
 			rf.heartbeatAt = time.Now()
 
+			// send heartbeat immediately after becoming a leader
+			rf.sendHeartbeat()
+
 			rf.mu.Unlock()
 		}
-
 	}
 }
 
 func getNextHeartbeatTime() time.Time {
 	return time.Now().Add(HEARTBEAT_FERQUENCY)
+}
+
+// This function must be called in the critical section
+func (rf *Raft) sendHeartbeat() {
+	// copy rf's state before putting into args
+	currentTerm := rf.currentTerm
+	leaderId := rf.me
+
+	for i, peer := range rf.peers {
+		if i == rf.me {
+			continue
+		}
+		peer := peer
+
+		go func() {
+			args := new(AppendEntriesArgs)
+			args.Term = currentTerm
+			args.LeaderId = leaderId
+
+			reply := new(AppendEntriesReply)
+			ok := peer.Call("Raft.AppendEntries", args, reply)
+
+			if !ok { // network failure
+				return
+			}
+
+			// verify reply
+			rf.mu.Lock()
+			defer rf.mu.Unlock()
+
+			if rf.state != STATE_LEADER { // only leader needs to handle AppendEntries RPC reply
+				return
+			}
+
+			if reply.Term > rf.currentTerm {
+				log.Printf("inst %d: AE Resp: leader becomes follower because higher term: %d -> %d",
+					rf.me, rf.currentTerm, reply.Term)
+				rf.currentTerm = reply.Term
+				rf.votedFor = -1
+				rf.electionTimeoutAt = getNextElectionTimeout()
+				rf.state = STATE_FOLLOWER
+			}
+		}()
+	}
 }
 
 func (rf *Raft) heartbeatTicker() {
@@ -473,48 +533,9 @@ func (rf *Raft) heartbeatTicker() {
 			continue
 		}
 
-		// send heartbeat
+		//log.Printf("inst %d: ticker: heartbeat at %v", rf.me, time.Now())
 
-		// copy rf's state before putting into args
-		currentTerm := rf.currentTerm
-		leaderId := rf.me
-
-		for i, peer := range rf.peers {
-			if i == rf.me {
-				continue
-			}
-			peer := peer
-
-			go func() {
-				args := new(AppendEntriesArgs)
-				args.Term = currentTerm
-				args.LeaderId = leaderId
-
-				reply := new(AppendEntriesReply)
-				ok := peer.Call("Raft.AppendEntries", args, reply)
-
-				if !ok { // network failure
-					return
-				}
-
-				// verify reply
-				rf.mu.Lock()
-				defer rf.mu.Unlock()
-
-				if rf.state != STATE_LEADER { // only leader needs to handle AppendEntries RPC reply
-					return
-				}
-
-				if reply.Term > rf.currentTerm {
-					log.Printf("AE Resp: inst %d: leader becomes follower because higher term: %d -> %d",
-						rf.me, rf.currentTerm, reply.Term)
-					rf.currentTerm = reply.Term
-					rf.votedFor = -1
-					rf.electionTimeoutAt = getNextElectionTimeout()
-					rf.state = STATE_FOLLOWER
-				}
-			}()
-		}
+		rf.sendHeartbeat()
 
 		rf.heartbeatAt = getNextHeartbeatTime()
 
@@ -539,7 +560,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.peers = peers
 	rf.persister = persister
 	rf.me = me
-
 	// Your initialization code here (2A, 2B, 2C).
 	configLog()
 
