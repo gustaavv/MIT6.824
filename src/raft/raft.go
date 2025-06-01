@@ -183,10 +183,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	reply.Term = args.Term
 
 	if args.Term > rf.currentTerm {
-		//if rf.state != STATE_FOLLOWER {
 		log.Printf("inst %d: RV Req: %v becomes follower because candidate (inst %d) with higher term: %d -> %d",
 			rf.me, rf.state, args.CandidateId, rf.currentTerm, args.Term)
-		//}
 		rf.currentTerm = args.Term
 		rf.votedFor = -1
 		rf.electionTimeoutAt = getNextElectionTimeout()
@@ -228,10 +226,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	reply.Term = args.Term
 
 	if args.Term > rf.currentTerm {
-		//if rf.state != STATE_FOLLOWER {
 		log.Printf("inst %d: AE Req: %v becomes follower because leader (inst %d) with higher term: %d -> %d",
 			rf.me, rf.state, args.LeaderId, rf.currentTerm, args.Term)
-		//}
 		rf.currentTerm = args.Term
 		rf.votedFor = -1
 		rf.state = STATE_FOLLOWER
@@ -329,7 +325,7 @@ func getNextElectionTimeout() time.Time {
 }
 
 // The electionTimeoutTicker go routine starts a new election if this peer hasn't received
-// heartsbeats recently.
+// heartbeats recently.
 func (rf *Raft) electionTimeoutTicker() {
 	for rf.killed() == false {
 
@@ -462,7 +458,7 @@ func (rf *Raft) electionTimeoutTicker() {
 			rf.heartbeatAt = time.Now()
 
 			// send heartbeat immediately after becoming a leader
-			rf.sendHeartbeat()
+			rf.sendHeartbeats()
 
 			rf.mu.Unlock()
 		}
@@ -473,47 +469,47 @@ func getNextHeartbeatTime() time.Time {
 	return time.Now().Add(HEARTBEAT_FERQUENCY)
 }
 
-// This function must be called in the critical section
-func (rf *Raft) sendHeartbeat() {
+func (rf *Raft) sendAERequestAndHandleReply(peer *labrpc.ClientEnd) {
 	// copy rf's state before putting into args
 	currentTerm := rf.currentTerm
 	leaderId := rf.me
 
+	args := new(AppendEntriesArgs)
+	args.Term = currentTerm
+	args.LeaderId = leaderId
+
+	reply := new(AppendEntriesReply)
+	ok := peer.Call("Raft.AppendEntries", args, reply)
+
+	if !ok { // network failure
+		return
+	}
+
+	// verify reply
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	if rf.state != STATE_LEADER { // only leader needs to handle AppendEntries RPC reply
+		return
+	}
+
+	if reply.Term > rf.currentTerm {
+		log.Printf("inst %d: AE Resp: leader becomes follower because higher term: %d -> %d",
+			rf.me, rf.currentTerm, reply.Term)
+		rf.currentTerm = reply.Term
+		rf.votedFor = -1
+		rf.electionTimeoutAt = getNextElectionTimeout()
+		rf.state = STATE_FOLLOWER
+	}
+}
+
+// This function must be called in the critical section
+func (rf *Raft) sendHeartbeats() {
 	for i, peer := range rf.peers {
 		if i == rf.me {
 			continue
 		}
-		peer := peer
-
-		go func() {
-			args := new(AppendEntriesArgs)
-			args.Term = currentTerm
-			args.LeaderId = leaderId
-
-			reply := new(AppendEntriesReply)
-			ok := peer.Call("Raft.AppendEntries", args, reply)
-
-			if !ok { // network failure
-				return
-			}
-
-			// verify reply
-			rf.mu.Lock()
-			defer rf.mu.Unlock()
-
-			if rf.state != STATE_LEADER { // only leader needs to handle AppendEntries RPC reply
-				return
-			}
-
-			if reply.Term > rf.currentTerm {
-				log.Printf("inst %d: AE Resp: leader becomes follower because higher term: %d -> %d",
-					rf.me, rf.currentTerm, reply.Term)
-				rf.currentTerm = reply.Term
-				rf.votedFor = -1
-				rf.electionTimeoutAt = getNextElectionTimeout()
-				rf.state = STATE_FOLLOWER
-			}
-		}()
+		go rf.sendAERequestAndHandleReply(peer)
 	}
 }
 
@@ -535,7 +531,7 @@ func (rf *Raft) heartbeatTicker() {
 
 		//log.Printf("inst %d: ticker: heartbeat at %v", rf.me, time.Now())
 
-		rf.sendHeartbeat()
+		rf.sendHeartbeats()
 
 		rf.heartbeatAt = getNextHeartbeatTime()
 
