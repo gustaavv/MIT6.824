@@ -17,7 +17,7 @@ const TICKER_FREQUENCY = time.Millisecond * 1
 
 const APPLY_LOGENTRY_FREQUENCY = time.Millisecond * 200
 
-const LOG_TO_FILE = false
+const LOG_TO_FILE = true
 
 const ENABLE_TEST_VERBOSE = true
 

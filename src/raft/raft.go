@@ -377,7 +377,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	isLeader := rf.state == STATE_LEADER
 
 	if !isLeader {
-		return -1, -1, isLeader
+		return -7, -23, isLeader
 	}
 
 	rf.log = append(rf.log, LogEntry{Term: term, Command: command})
@@ -691,9 +691,11 @@ func getNextApplyLogEntryTime() time.Time {
 	return time.Now().Add(APPLY_LOGENTRY_FREQUENCY)
 }
 
-func (rf *Raft) applyLogEntryTicker() {
+func (rf *Raft) applyLogEntryTicker(applyCh chan ApplyMsg) {
 	for rf.killed() == false {
 		time.Sleep(TICKER_FREQUENCY)
+
+		var applyMsg *ApplyMsg = nil
 
 		rf.mu.Lock()
 		if rf.applyLogEntryAt.After(time.Now()) { // no need to apply log entry now
@@ -703,11 +705,21 @@ func (rf *Raft) applyLogEntryTicker() {
 
 		if rf.commitIndex > rf.lastApplied {
 			rf.lastApplied++
-			// TODO apply log[lastApplied] to state machine
+			applyMsg = &ApplyMsg{
+				CommandValid: true,
+				CommandIndex: rf.lastApplied,
+				Command:      rf.log[rf.lastApplied].Command,
+			}
 		}
 
 		rf.applyLogEntryAt = getNextApplyLogEntryTime()
 		rf.mu.Unlock()
+
+		// this channel may block, so we need to send applyMsg outside the
+		// critical section to prevent holding the lock for too long
+		if applyMsg != nil {
+			applyCh <- *applyMsg
+		}
 	}
 }
 
@@ -768,7 +780,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// start electionTimeoutTicker goroutine to start elections
 	go rf.electionTimeoutTicker()
 	go rf.heartbeatTicker()
-	go rf.applyLogEntryTicker()
+	go rf.applyLogEntryTicker(applyCh)
 
 	return rf
 }
