@@ -15,9 +15,11 @@ const STATE_CANDIDATE = "candidate"
 
 const TICKER_FREQUENCY = time.Millisecond * 1
 
+const APPLY_LOGENTRY_FREQUENCY = time.Millisecond * 200
+
 const LOG_TO_FILE = false
 
-const ENABLE_TEST_VERBOSE = false
+const ENABLE_TEST_VERBOSE = true
 
 /////////////////////////// follower parameters ///////////////////////////////
 
