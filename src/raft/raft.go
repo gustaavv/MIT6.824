@@ -95,6 +95,7 @@ type Raft struct {
 	lastNewEntryIndex        int       // see Figure 2 | AE RPC | Receiver #5, index of last new entry
 	applyLogEntryAt          time.Time // for apply log entry cronjob
 	firstLogIndexCurrentTerm int       // see Figure 2 | Rules for servers | Leaders last rule
+	successiveLogConflict    []int     // for LOG_BT_BIN_EXP
 }
 
 func (rf *Raft) initVolatileLeaderState() {
@@ -104,6 +105,13 @@ func (rf *Raft) initVolatileLeaderState() {
 	}
 	for i := range rf.matchIndex {
 		rf.matchIndex[i] = 0
+	}
+
+	// states not on Figure 2 ////////////////////////////////
+	// for convenience, put the init/re-init of relevant fields here
+
+	for i := range rf.successiveLogConflict {
+		rf.successiveLogConflict[i] = 0
 	}
 }
 
@@ -259,6 +267,11 @@ type AppendEntriesArgs struct {
 type AppendEntriesReply struct {
 	Term    int
 	Success bool
+
+	// for LOG_BT_TERM_BYPASS
+
+	ConflictIndex int // use -1 as null
+	ConflictTerm  int // use -1 as null
 }
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
@@ -285,6 +298,22 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.state = STATE_FOLLOWER
 	}
 
+	if LOG_BACKTRACKING_MODE == LOG_BT_TERM_BYPASS {
+		if args.PrevLogIndex >= len(rf.log) {
+			reply.ConflictTerm = -1
+			reply.ConflictIndex = len(rf.log)
+		} else if rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
+			reply.ConflictTerm = rf.log[args.PrevLogIndex].Term
+
+			// the student's guide does not say to store the search result into ConflictIndex.
+			// But I guess we should do this
+			reply.ConflictIndex = args.PrevLogIndex
+			for rf.log[reply.ConflictIndex-1].Term == reply.ConflictTerm {
+				reply.ConflictIndex--
+			}
+		}
+	}
+
 	// #2
 	if args.PrevLogIndex >= len(rf.log) || rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
 		reply.Success = false
@@ -308,7 +337,12 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	// #4
 	if j < len(args.Entries) { // new entries
-		rf.log = append(rf.log, args.Entries[j:]...)
+		// data race happens when appending args.Entries[j:] directly into rf.log
+		// I don't know why gob read cause such data race
+		entriesToAppend := make([]LogEntry, len(args.Entries[j:]))
+		copy(entriesToAppend, args.Entries[j:])
+
+		rf.log = append(rf.log, entriesToAppend...)
 		rf.lastNewEntryIndex = len(rf.log) - 1
 	}
 
@@ -578,7 +612,7 @@ func (rf *Raft) sendAERequestAndHandleReply(peerIndex int) {
 	leaderId := rf.me
 	prevLogIndex := rf.nextIndex[peerIndex] - 1
 	prevLogTerm := rf.log[prevLogIndex].Term
-	entries := rf.log[rf.nextIndex[peerIndex]:] // TODO: will this be an empty slice? or throw a panic
+	entries := rf.log[rf.nextIndex[peerIndex]:]
 	leaderCommit := rf.commitIndex
 	rf.mu.Unlock()
 
@@ -606,8 +640,8 @@ func (rf *Raft) sendAERequestAndHandleReply(peerIndex int) {
 	}
 
 	if reply.Term > rf.currentTerm {
-		log.Printf("inst %d: AE Resp: leader becomes follower because higher term: %d -> %d",
-			rf.me, rf.currentTerm, reply.Term)
+		log.Printf("inst %d: AE Resp: leader becomes follower because new leader %d with higher term: %d -> %d",
+			rf.me, peerIndex, rf.currentTerm, reply.Term)
 		rf.currentTerm = reply.Term
 		rf.votedFor = -1
 		rf.electionTimeoutAt = getNextElectionTimeout()
@@ -623,10 +657,41 @@ func (rf *Raft) sendAERequestAndHandleReply(peerIndex int) {
 		// because matchIndex should not go back
 		if prevLogIndex+len(entries) > rf.matchIndex[peerIndex] {
 			rf.matchIndex[peerIndex] = prevLogIndex + len(entries)
-			rf.nextIndex[peerIndex] = rf.matchIndex[peerIndex] + 1
+			if LOG_BACKTRACKING_MODE != LOG_BT_AGGRESSIVE {
+				rf.nextIndex[peerIndex] = rf.matchIndex[peerIndex] + 1
+			}
 		}
+		rf.successiveLogConflict[peerIndex] = 0
 	} else {
-		rf.nextIndex[peerIndex]--
+		if LOG_BACKTRACKING_MODE == LOG_BT_TERM_BYPASS {
+			i := len(rf.log) - 1
+			for ; i > 0; i-- {
+				if rf.log[i].Term == reply.ConflictTerm {
+					break
+				}
+			}
+
+			if i > 0 {
+				rf.nextIndex[peerIndex] = i + 1
+			} else {
+				rf.nextIndex[peerIndex] = reply.ConflictIndex
+			}
+		}
+
+		if LOG_BACKTRACKING_MODE == LOG_BT_ORIGINAL {
+			rf.nextIndex[peerIndex]--
+		}
+
+		if LOG_BACKTRACKING_MODE == LOG_BT_AGGRESSIVE {
+			rf.nextIndex[peerIndex] = 1
+		}
+
+		if LOG_BACKTRACKING_MODE == LOG_BT_BIN_EXP {
+			rf.nextIndex[peerIndex] -= 1 << rf.successiveLogConflict[peerIndex]
+			rf.nextIndex[peerIndex] = max(rf.nextIndex[peerIndex], 1)
+		}
+
+		rf.successiveLogConflict[peerIndex]++
 	}
 
 	// rf.firstLogIndexCurrentTerm ensures that log[N].term == currentTem
@@ -719,6 +784,7 @@ func (rf *Raft) applyLogEntryTicker(applyCh chan ApplyMsg) {
 		// critical section to prevent holding the lock for too long
 		if applyMsg != nil {
 			applyCh <- *applyMsg
+			log.Printf("inst %d: ticker2: applied log index: %v", rf.me, applyMsg.CommandIndex)
 		}
 	}
 }
@@ -742,6 +808,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.me = me
 	// Your initialization code here (2A, 2B, 2C).
 	configLog()
+	validateLogBacktrackingMode()
 
 	// states on Figure 2 ///////////////////////////////////
 
@@ -771,6 +838,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.lastNewEntryIndex = -1
 	rf.applyLogEntryAt = getNextApplyLogEntryTime()
 	rf.firstLogIndexCurrentTerm = 0
+	rf.successiveLogConflict = make([]int, len(rf.peers))
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())

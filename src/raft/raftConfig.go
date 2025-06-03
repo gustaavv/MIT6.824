@@ -15,11 +15,19 @@ const STATE_CANDIDATE = "candidate"
 
 const TICKER_FREQUENCY = time.Millisecond * 1
 
-const APPLY_LOGENTRY_FREQUENCY = time.Millisecond * 200
+const APPLY_LOGENTRY_FREQUENCY = time.Millisecond * 10
+
+const LOG_BT_ORIGINAL = 1
+const LOG_BT_BIN_EXP = 2
+const LOG_BT_TERM_BYPASS = 3
+const LOG_BT_AGGRESSIVE = 4
+
+// choose one log backtracking mode above
+const LOG_BACKTRACKING_MODE = LOG_BT_TERM_BYPASS
 
 const LOG_TO_FILE = true
 
-const ENABLE_TEST_VERBOSE = true
+const ENABLE_TEST_VERBOSE = false
 
 /////////////////////////// follower parameters ///////////////////////////////
 
@@ -50,5 +58,20 @@ func configLog() {
 			log.Fatal("fail to open app.log", err)
 		}
 		log.SetOutput(file)
+	}
+}
+
+func validateLogBacktrackingMode() {
+	switch LOG_BACKTRACKING_MODE {
+	case LOG_BT_ORIGINAL:
+		log.Print("log backtracking mode: original")
+	case LOG_BT_BIN_EXP:
+		log.Print("log backtracking mode: binary exponential")
+	case LOG_BT_TERM_BYPASS:
+		log.Print("log backtracking mode: conflict term bypassing")
+	case LOG_BT_AGGRESSIVE:
+		log.Print("log backtracking mode: super aggressive")
+	default:
+		log.Fatal("invalid log backtracking mode")
 	}
 }

@@ -430,6 +430,7 @@ func TestBackup2B(t *testing.T) {
 
 	// put leader and one follower in a partition
 	leader1 := cfg.checkOneLeader()
+	out(fmt.Sprintf("partition will fail: leader %d, follower %d", leader1, (leader1+1)%servers))
 	cfg.disconnect((leader1 + 2) % servers)
 	cfg.disconnect((leader1 + 3) % servers)
 	cfg.disconnect((leader1 + 4) % servers)
@@ -439,6 +440,7 @@ func TestBackup2B(t *testing.T) {
 		cfg.rafts[leader1].Start(rand.Int())
 	}
 
+	out("1")
 	time.Sleep(RaftElectionTimeout / 2)
 
 	cfg.disconnect((leader1 + 0) % servers)
@@ -448,25 +450,28 @@ func TestBackup2B(t *testing.T) {
 	cfg.connect((leader1 + 2) % servers)
 	cfg.connect((leader1 + 3) % servers)
 	cfg.connect((leader1 + 4) % servers)
-
+	out(fmt.Sprintf("partition will succeed: %d, %d, %d", (leader1+2)%servers, (leader1+3)%servers, (leader1+4)%servers))
 	// lots of successful commands to new group.
 	for i := 0; i < 50; i++ {
 		cfg.one(rand.Int(), 3, true)
 	}
-
+	out("2")
 	// now another partitioned leader and one follower
 	leader2 := cfg.checkOneLeader()
+	out(fmt.Sprintf("partition will succeed: leader: %d", leader2))
+
 	other := (leader1 + 2) % servers
 	if leader2 == other {
 		other = (leader2 + 1) % servers
 	}
 	cfg.disconnect(other)
+	out(fmt.Sprintf("partition will succeed: %d disconnects", other))
 
 	// lots more commands that won't commit
 	for i := 0; i < 50; i++ {
 		cfg.rafts[leader2].Start(rand.Int())
 	}
-
+	out("3")
 	time.Sleep(RaftElectionTimeout / 2)
 
 	// bring original leader back to life,
@@ -476,18 +481,19 @@ func TestBackup2B(t *testing.T) {
 	cfg.connect((leader1 + 0) % servers)
 	cfg.connect((leader1 + 1) % servers)
 	cfg.connect(other)
+	out(fmt.Sprintf("partition 2 will succeed: %d, %d, %d", (leader1+0)%servers, (leader1+1)%servers, other))
 
 	// lots of successful commands to new group.
 	for i := 0; i < 50; i++ {
 		cfg.one(rand.Int(), 3, true)
 	}
-
+	out("4")
 	// now everyone
 	for i := 0; i < servers; i++ {
 		cfg.connect(i)
 	}
 	cfg.one(rand.Int(), servers, true)
-
+	out("5")
 	cfg.end()
 }
 
