@@ -10,4 +10,5 @@ Checkout the corresponding tag to see the final code of each lab.
 | ------ | -------------------- | ----------- | ---------------- | ---------------------- |
 | Lab 1  | MapReduce            | `lab1` tag  | ✅                | [lab1.md](./lab1.md)   |
 | Lab 2A | Raft leader election | `lab2a` tag | ✅                | [lab2a.md](./lab2a.md) |
+| Lab 2B | Raft log replication | `lab2b` tag | ✅                | [lab2b.md](./lab2b.md) |
 

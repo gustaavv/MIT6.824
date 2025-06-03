@@ -612,7 +612,8 @@ func (rf *Raft) sendAERequestAndHandleReply(peerIndex int) {
 	leaderId := rf.me
 	prevLogIndex := rf.nextIndex[peerIndex] - 1
 	prevLogTerm := rf.log[prevLogIndex].Term
-	entries := rf.log[rf.nextIndex[peerIndex]:]
+	entries := make([]LogEntry, len(rf.log[rf.nextIndex[peerIndex]:]))
+	copy(entries, rf.log[rf.nextIndex[peerIndex]:])
 	leaderCommit := rf.commitIndex
 	rf.mu.Unlock()
 

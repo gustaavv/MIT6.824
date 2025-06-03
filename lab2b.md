@@ -1,4 +1,4 @@
-# Lab 2B: Raft log
+# Lab 2B: Raft log replication
 
 http://nil.csail.mit.edu/6.824/2021/labs/lab-raft.html#:~:text=Part%202B:%20log
 
@@ -64,6 +64,16 @@ See the code for detailed implementation. This mode is the hardest in terms of i
 4️⃣ Super Aggressive
 
 `nextIndex` is always set to 1 and therefore all the entires will be sent in every AppendEntries request. The time performance is good, but the cost to the network is too large to bear. Also note that we make use of the ability of handling duplication.
+
+`TestRPCBytes2B` will fail if we use this mode.
+
+```
+Test (2B): RPC byte count ...
+--- FAIL: TestRPCBytes2B (2.96s)
+    test_test.go:192: too many RPC bytes; got 1116900, expected 150000
+```
+
+---
 
 Here is a table comparing the longest time running `TestBackup2B` using different log backtracking modes.
 
