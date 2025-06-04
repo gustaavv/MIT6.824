@@ -100,3 +100,8 @@ Leaving the comparison with Paxos aside, I agree with the idea especially when I
 
 Another possible solution is to turn to LLM, but I deliberately not to do so for a few reasons: (a) I want to practice my abilities to read papers; (b) This lab was at 2021, before the first LLM product ChatGPT appeared. If people at that time could do it, I should also do it in the same way; (c) AI may be wrong.
 
+## Updates
+
+> This section is written after this lab is done, i.e., not a part of the original report.
+
+I should have taken lecture 7 before working on this lab, because it contains a significant amount of useful content to do this lab, which will reduce difficulty. But anyway I worked it out.
