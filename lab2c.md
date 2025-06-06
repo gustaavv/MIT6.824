@@ -8,7 +8,7 @@ This lab requires only a little more code, so nothing particularly needs to be d
 
 ## Experiences
 
-- Figure 2 says that persistent state should be "updated on stable storage before responding to RPCs". This is easily to do: simply put a `defer rf.persist()` at the beginning of each RPC handler. But there are other places where we need to call this function besides RPC handlers. How to spot those places?
+- Figure 2 says that persistent state should be "updated on stable storage before responding to RPCs". This is easy to do: simply put a `defer rf.persist()` at the beginning of each RPC handler. But there are other places where we need to call this function besides RPC handlers. How to spot those places?
   - I found it helpful to use IDE's "Find Usages" functionality to find all statements that involve the persistent state. Furthermore, GoLand can differentiate between "Value Read" and "Value Write", which saves more time because there are more reads than writes in most cases.
   - A slightly inferior approach is to do a global search of the field name, but there will be local variables with the same name.
   - Do not read through every line of the existing code to find where to add that function. It is both inefficient and error-prone.
