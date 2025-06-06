@@ -15,7 +15,7 @@ const STATE_CANDIDATE = "candidate"
 
 const TICKER_FREQUENCY = time.Millisecond * 1
 
-const APPLY_LOGENTRY_FREQUENCY = time.Millisecond * 10
+const APPLY_LOGENTRY_FREQUENCY = time.Millisecond * 1
 
 const LOG_BT_ORIGINAL = 1
 const LOG_BT_BIN_EXP = 2

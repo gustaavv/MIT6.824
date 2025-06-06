@@ -36,6 +36,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	defer rf.persist()
 
 	// #1
 	if args.Term < rf.currentTerm { // outdated candidate
@@ -149,6 +150,7 @@ func (rf *Raft) electionTimeoutTicker() {
 		rf.state = STATE_CANDIDATE
 		rf.currentTerm++
 		rf.votedFor = rf.me
+		rf.persist()
 		log.Printf("inst %d: ticker: follower becomes candidate at a new term %d", rf.me, rf.currentTerm)
 
 		timeout := time.After(getElectionTimeoutDuration() * time.Millisecond)
@@ -208,6 +210,7 @@ func (rf *Raft) electionTimeoutTicker() {
 					rf.votedFor = -1
 					rf.electionTimeoutAt = getNextElectionTimeout()
 					rf.state = STATE_FOLLOWER
+					rf.persist()
 					return
 				}
 
@@ -242,6 +245,7 @@ func (rf *Raft) electionTimeoutTicker() {
 			rf.electionTimeoutAt = time.Now()
 			rf.state = STATE_FOLLOWER
 			rf.votedFor = -1
+			rf.persist()
 
 			rf.mu.Unlock()
 

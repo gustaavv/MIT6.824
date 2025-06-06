@@ -18,6 +18,7 @@ package raft
 //
 
 import (
+	"bytes"
 	"log"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"6.824/labgob"
 	//	"6.824/labgob"
 	"6.824/labrpc"
 )
@@ -88,6 +90,8 @@ type Raft struct {
 
 	// states not on Figure 2 ////////////////////////////////
 
+	// volatile
+
 	state                    string
 	electionTimeoutAt        time.Time // for election timeout cronjob
 	heartbeatAt              time.Time // for heartbeat cronjob
@@ -131,6 +135,7 @@ func (rf *Raft) GetState() (int, bool) {
 // save Raft's persistent state to stable storage,
 // where it can later be retrieved after a crash and restart.
 // see paper's Figure 2 for a description of what should be persistent.
+// This function must be called in a critical section
 //
 func (rf *Raft) persist() {
 	// Your code here (2C).
@@ -141,6 +146,25 @@ func (rf *Raft) persist() {
 	// e.Encode(rf.yyy)
 	// data := w.Bytes()
 	// rf.persister.SaveRaftState(data)
+
+	//log.Printf("inst %d: persist log start", rf.me)
+
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	if err := e.Encode(rf.currentTerm); err != nil {
+		log.Fatalf("inst %d: persist log err: %v", rf.me, err)
+	}
+	if err := e.Encode(rf.votedFor); err != nil {
+		log.Fatalf("inst %d: persist log err: %v", rf.me, err)
+	}
+	if err := e.Encode(rf.log); err != nil {
+		log.Fatalf("inst %d: persist log err: %v", rf.me, err)
+	}
+
+	data := w.Bytes()
+
+	rf.persister.SaveRaftState(data)
+	//log.Printf("inst %d: persist log finished, data len: %d", rf.me, len(data))
 }
 
 //
@@ -163,6 +187,25 @@ func (rf *Raft) readPersist(data []byte) {
 	//   rf.xxx = xxx
 	//   rf.yyy = yyy
 	// }
+
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+
+	var currentTerm int
+	var votedFor int
+	var raftLog []LogEntry
+
+	if d.Decode(&currentTerm) != nil ||
+		d.Decode(&votedFor) != nil ||
+		d.Decode(&raftLog) != nil {
+		log.Fatalf("inst %d: readPersist: error happens when decoding", rf.me)
+	} else {
+		rf.currentTerm = currentTerm
+		rf.votedFor = votedFor
+		rf.log = raftLog
+	}
+	log.Printf("inst %d: readPersist: restore previously persisted state, currentTerm: %d, votedFor: %d",
+		rf.me, rf.currentTerm, votedFor)
 }
 
 // CondInstallSnapshot
@@ -214,6 +257,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	}
 
 	rf.log = append(rf.log, LogEntry{Term: term, Command: command})
+	rf.persist()
 	log.Printf("inst %d: Start: leader appends a new log entry (index %d)", rf.me, index)
 
 	return index, term, isLeader
@@ -279,7 +323,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// volatile on leaders
 	rf.nextIndex = make([]int, len(rf.peers))
 	rf.matchIndex = make([]int, len(rf.peers))
-	rf.initVolatileLeaderState()
 
 	// states not on Figure 2 ////////////////////////////////
 
@@ -293,6 +336,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
+	// nextIndex is based on log[], so the init should be after reading persistent state
+	rf.initVolatileLeaderState()
 
 	log.Printf("inst %d: start as follower", rf.me)
 

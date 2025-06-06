@@ -27,6 +27,7 @@ type AppendEntriesReply struct {
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	defer rf.persist()
 
 	// #1
 	if args.Term < rf.currentTerm { // outdated leader
@@ -151,6 +152,7 @@ func (rf *Raft) sendAERequestAndHandleReply(peerIndex int) {
 		rf.votedFor = -1
 		rf.electionTimeoutAt = getNextElectionTimeout()
 		rf.state = STATE_FOLLOWER
+		rf.persist()
 	}
 
 	if args.Term != reply.Term {
