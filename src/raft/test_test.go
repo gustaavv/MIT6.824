@@ -1055,6 +1055,7 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 
 		if disconnect {
 			cfg.disconnect(victim)
+			out(fmt.Sprintf("disconnect %d", victim))
 			cfg.one(rand.Int(), servers-1, true)
 		}
 		if crash {
@@ -1074,6 +1075,7 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 		if disconnect {
 			// reconnect a follower, who maybe behind and
 			// needs to rceive a snapshot to catch up.
+			out(fmt.Sprintf("reconnect %d", victim))
 			cfg.connect(victim)
 			cfg.one(rand.Int(), servers, true)
 			leader1 = cfg.checkOneLeader()
@@ -1084,6 +1086,7 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 			cfg.one(rand.Int(), servers, true)
 			leader1 = cfg.checkOneLeader()
 		}
+		out(fmt.Sprintf("iter %d done", i))
 	}
 	cfg.end()
 }

@@ -63,6 +63,7 @@ type Raft struct {
 	persister *Persister          // Object to hold this peer's persisted state
 	me        int                 // this peer's index into peers[]
 	dead      int32               // set by Kill()
+	applyCh   chan ApplyMsg
 
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
@@ -158,6 +159,7 @@ func (rf *Raft) persist() {
 
 	data := w.Bytes()
 
+	// TODO: Hint #6: use SaveStateAndSnapshot()
 	rf.persister.SaveRaftState(data)
 	//log.Printf("inst %d: persist log finished, data len: %d", rf.me, len(data))
 }
@@ -203,27 +205,6 @@ func (rf *Raft) readPersist(data []byte) {
 		rf.me, rf.currentTerm, votedFor)
 }
 
-// CondInstallSnapshot
-// A service wants to switch to snapshot.  Only do so if Raft hasn't
-// have more recent info since it communicate the snapshot on applyCh.
-//
-func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int, snapshot []byte) bool {
-
-	// Your code here (2D).
-
-	return true
-}
-
-// Snapshot
-// the service says it has created a snapshot that has
-// all info up to and including index. this means the
-// service no longer needs the log through (and including)
-// that index. Raft should now trim its log as much as possible.
-func (rf *Raft) Snapshot(index int, snapshot []byte) {
-	// Your code here (2D).
-
-}
-
 // Start
 // the service using Raft (e.g. a k/v server) wants to start
 // agreement on the next command to be appended to Raft's log. if this
@@ -243,7 +224,10 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	index := rf.log.nextIndex()
+	index := rf.log.SnapShot.LastIncludedIndex + 1
+	if !rf.log.isEmpty() {
+		index = rf.log.nextIndex()
+	}
 	term := rf.currentTerm
 	isLeader := rf.state == STATE_LEADER
 
@@ -254,6 +238,8 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.log.append(LogEntry{Term: term, Command: command, Index: index})
 	rf.persist()
 	log.Printf("inst %d: Start: leader appends a new log entry (index %d)", rf.me, index)
+
+	// TODO: send AE RPC immediately. Create a new goroutine to send.
 
 	return index, term, isLeader
 }
@@ -296,6 +282,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.peers = peers
 	rf.persister = persister
 	rf.me = me
+	rf.applyCh = applyCh
 	// Your initialization code here (2A, 2B, 2C).
 	configLog()
 	validateLogBacktrackingMode()
@@ -341,7 +328,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// start electionTimeoutTicker goroutine to start elections
 	go rf.electionTimeoutTicker()
 	go rf.heartbeatTicker()
-	go rf.applyLogEntryTicker(applyCh)
+	go rf.applyLogEntryTicker()
 
 	return rf
 }

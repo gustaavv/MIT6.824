@@ -9,7 +9,8 @@ type LogEntry struct {
 }
 
 type raftLog struct {
-	Entries []LogEntry
+	Entries  []LogEntry
+	SnapShot SnapShot
 }
 
 func (rl *raftLog) size() int {
@@ -45,6 +46,9 @@ func (rl *raftLog) checkValidIndex(index int) bool {
 
 // return nil if index is out of range
 func (rl *raftLog) get(index int) *LogEntry {
+	if rl.isEmpty() {
+		return nil
+	}
 	firstIndex := rl.first().Index
 
 	if !rl.checkValidIndex(index) {
@@ -68,6 +72,14 @@ func (rl *raftLog) getRange(startIndex int, endIndex int) []LogEntry {
 	}
 	// indices are continuous
 	return rl.Entries[startIndex-firstIndex : endIndex-firstIndex+1]
+}
+
+func (rl *raftLog) getRangeStartFrom(startIndex int) []LogEntry {
+	firstIndex := rl.first().Index
+	if !(firstIndex <= startIndex && startIndex <= rl.nextIndex()) {
+		return nil
+	}
+	return rl.Entries[startIndex-firstIndex:]
 }
 
 func (rl *raftLog) append(entries ...LogEntry) {

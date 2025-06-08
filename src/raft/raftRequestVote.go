@@ -57,9 +57,14 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	// #2
-	voterLastLogEntry := rf.log.last()
-	voterLastLogIndex := voterLastLogEntry.Index
-	voterLastLogTerm := voterLastLogEntry.Term
+	voterLastLogIndex := rf.log.SnapShot.LastIncludedIndex
+	voterLastLogTerm := rf.log.SnapShot.LastIncludedTerm
+
+	if !rf.log.isEmpty() {
+		voterLastLogEntry := rf.log.last()
+		voterLastLogIndex = voterLastLogEntry.Index
+		voterLastLogTerm = voterLastLogEntry.Term
+	}
 
 	candidateLogUpToDate := false
 	if args.LastLogTerm != voterLastLogTerm {

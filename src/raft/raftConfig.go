@@ -25,9 +25,9 @@ const LOG_BT_AGGRESSIVE = 4
 // choose one log backtracking mode above
 const LOG_BACKTRACKING_MODE = LOG_BT_TERM_BYPASS
 
-const LOG_TO_FILE = true
+const LOG_TO_FILE = false
 
-const ENABLE_TEST_VERBOSE = false
+const ENABLE_TEST_VERBOSE = true
 
 /////////////////////////// follower parameters ///////////////////////////////
 

@@ -49,7 +49,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.state = STATE_FOLLOWER
 	}
 
-	if LOG_BACKTRACKING_MODE == LOG_BT_TERM_BYPASS {
+	if LOG_BACKTRACKING_MODE == LOG_BT_TERM_BYPASS && !rf.log.isEmpty() {
 		if args.PrevLogIndex >= rf.log.nextIndex() {
 			reply.ConflictTerm = -1
 			reply.ConflictIndex = rf.log.nextIndex()
@@ -67,7 +67,13 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 
 	// #2
-	if entry := rf.log.get(args.PrevLogIndex); entry == nil || entry.Term != args.PrevLogTerm {
+	if entry := rf.log.get(args.PrevLogIndex); !rf.log.isEmpty() && (entry == nil || entry.Term != args.PrevLogTerm) {
+		reply.Success = false
+		return
+	}
+	if rf.log.isEmpty() &&
+		!(rf.log.SnapShot.LastIncludedIndex == args.PrevLogIndex &&
+			rf.log.SnapShot.LastIncludedTerm == args.PrevLogTerm) {
 		reply.Success = false
 		return
 	}
@@ -77,7 +83,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	// #3
 	i := args.PrevLogIndex + 1
 	j := 0
-	for i < rf.log.nextIndex() && j < len(args.Entries) {
+	for !rf.log.isEmpty() && i < rf.log.nextIndex() && j < len(args.Entries) {
 		if rf.log.get(i).Term != args.Entries[j].Term { // conflict happens.
 			rf.log.Entries = rf.log.getRange(rf.log.first().Index, i-1) // delete existing entries
 			//i = rf.log.nextIndex()
@@ -116,11 +122,30 @@ func (rf *Raft) sendAERequestAndHandleReply(peerIndex int) {
 	rf.mu.Lock()
 	currentTerm := rf.currentTerm
 	leaderId := rf.me
-	prevLogIndex := rf.nextIndex[peerIndex] - 1
-	prevLogTerm := rf.log.get(prevLogIndex).Term
-	entriesLen := rf.log.nextIndex() - rf.nextIndex[peerIndex]
-	entries := make([]LogEntry, entriesLen)
-	copy(entries, rf.log.getRange(rf.nextIndex[peerIndex], rf.nextIndex[peerIndex]+entriesLen-1))
+
+	if nextIndex := rf.nextIndex[peerIndex]; nextIndex <= rf.log.SnapShot.LastIncludedIndex {
+		// a lagging follower
+		log.Printf("inst %d: AE Req => IS Req: inst %d's nextIndex %d <= snapshot.LastIncludedIndex %d",
+			rf.me, peerIndex, nextIndex, rf.log.SnapShot.LastIncludedIndex)
+		rf.mu.Unlock()
+		go rf.sendISRequestAndHandleReply(peerIndex)
+		return
+	}
+
+	prevLogIndex := rf.log.SnapShot.LastIncludedIndex
+	prevLogTerm := rf.log.SnapShot.LastIncludedTerm
+
+	if pli := rf.nextIndex[peerIndex] - 1; rf.log.get(pli) != nil {
+		prevLogIndex = pli
+		prevLogTerm = rf.log.get(prevLogIndex).Term
+	}
+
+	entries := make([]LogEntry, 0)
+	if !rf.log.isEmpty() {
+		entries = make([]LogEntry, rf.log.nextIndex()-rf.nextIndex[peerIndex])
+		copy(entries, rf.log.getRangeStartFrom(rf.nextIndex[peerIndex]))
+	}
+
 	leaderCommit := rf.commitIndex
 	rf.mu.Unlock()
 

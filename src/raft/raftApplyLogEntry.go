@@ -9,7 +9,7 @@ func getNextApplyLogEntryTime() time.Time {
 	return time.Now().Add(APPLY_LOGENTRY_FREQUENCY)
 }
 
-func (rf *Raft) applyLogEntryTicker(applyCh chan ApplyMsg) {
+func (rf *Raft) applyLogEntryTicker() {
 	for rf.killed() == false {
 		time.Sleep(TICKER_FREQUENCY)
 
@@ -42,7 +42,7 @@ func (rf *Raft) applyLogEntryTicker(applyCh chan ApplyMsg) {
 		// this channel may block, so we need to send applyMsg outside the
 		// critical section to prevent holding the lock for too long
 		if applyMsg != nil {
-			applyCh <- *applyMsg
+			rf.applyCh <- *applyMsg
 			log.Printf("inst %d: ticker2: applied log index: %v", rf.me, applyMsg.CommandIndex)
 		}
 	}
