@@ -23,10 +23,16 @@ func (rf *Raft) applyLogEntryTicker(applyCh chan ApplyMsg) {
 
 		if rf.commitIndex > rf.lastApplied {
 			rf.lastApplied++
+
+			if entry := rf.log.get(rf.lastApplied); entry == nil {
+				log.Panicf("inst %d: ticker2: lastApplied: %d, log index range: [%d, %d]",
+					rf.me, rf.lastApplied, rf.log.first().Index, rf.log.last().Index)
+			}
+
 			applyMsg = &ApplyMsg{
 				CommandValid: true,
 				CommandIndex: rf.lastApplied,
-				Command:      rf.log[rf.lastApplied].Command,
+				Command:      rf.log.get(rf.lastApplied).Command,
 			}
 		}
 

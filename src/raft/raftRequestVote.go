@@ -57,8 +57,9 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	// #2
-	voterLastLogIndex := len(rf.log) - 1
-	voterLastLogTerm := rf.log[voterLastLogIndex].Term
+	voterLastLogEntry := rf.log.last()
+	voterLastLogIndex := voterLastLogEntry.Index
+	voterLastLogTerm := voterLastLogEntry.Term
 
 	candidateLogUpToDate := false
 	if args.LastLogTerm != voterLastLogTerm {
@@ -172,8 +173,9 @@ func (rf *Raft) electionTimeoutTicker() {
 
 		term := rf.currentTerm
 		candidateId := rf.me
-		lastLogIndex := len(rf.log) - 1
-		lastLogTerm := rf.log[lastLogIndex].Term
+		lastLogEntry := rf.log.last()
+		lastLogIndex := lastLogEntry.Index
+		lastLogTerm := lastLogEntry.Term
 
 		for i, peer := range rf.peers {
 			if i == rf.me {
@@ -260,7 +262,7 @@ func (rf *Raft) electionTimeoutTicker() {
 			log.Printf("inst %d: ticker: candidate becomes leader at term %d", rf.me, rf.currentTerm)
 			rf.state = STATE_LEADER
 			rf.initVolatileLeaderState()
-			rf.firstLogIndexCurrentTerm = len(rf.log)
+			rf.firstLogIndexCurrentTerm = rf.log.nextIndex()
 			rf.heartbeatAt = time.Now()
 
 			// send heartbeat immediately after becoming a leader

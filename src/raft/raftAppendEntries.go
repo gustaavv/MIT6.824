@@ -50,23 +50,24 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 
 	if LOG_BACKTRACKING_MODE == LOG_BT_TERM_BYPASS {
-		if args.PrevLogIndex >= len(rf.log) {
+		if args.PrevLogIndex >= rf.log.nextIndex() {
 			reply.ConflictTerm = -1
-			reply.ConflictIndex = len(rf.log)
-		} else if rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
-			reply.ConflictTerm = rf.log[args.PrevLogIndex].Term
+			reply.ConflictIndex = rf.log.nextIndex()
+		} else if entry := rf.log.get(args.PrevLogIndex); entry != nil && entry.Term != args.PrevLogTerm {
+			reply.ConflictTerm = entry.Term
 
 			// the student's guide does not say to store the search result into ConflictIndex.
 			// But I guess we should do this
 			reply.ConflictIndex = args.PrevLogIndex
-			for rf.log[reply.ConflictIndex-1].Term == reply.ConflictTerm {
+			for reply.ConflictIndex-1 >= rf.log.first().Index &&
+				rf.log.get(reply.ConflictIndex-1).Term == reply.ConflictTerm {
 				reply.ConflictIndex--
 			}
 		}
 	}
 
 	// #2
-	if args.PrevLogIndex >= len(rf.log) || rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
+	if entry := rf.log.get(args.PrevLogIndex); entry == nil || entry.Term != args.PrevLogTerm {
 		reply.Success = false
 		return
 	}
@@ -76,10 +77,10 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	// #3
 	i := args.PrevLogIndex + 1
 	j := 0
-	for i < len(rf.log) && j < len(args.Entries) {
-		if rf.log[i].Term != args.Entries[j].Term { // conflict happens.
-			rf.log = rf.log[:i] // delete existing entries
-			i = len(rf.log)
+	for i < rf.log.nextIndex() && j < len(args.Entries) {
+		if rf.log.get(i).Term != args.Entries[j].Term { // conflict happens.
+			rf.log.Entries = rf.log.getRange(rf.log.first().Index, i-1) // delete existing entries
+			//i = rf.log.nextIndex()
 			break
 		}
 		i++
@@ -93,8 +94,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		entriesToAppend := make([]LogEntry, len(args.Entries[j:]))
 		copy(entriesToAppend, args.Entries[j:])
 
-		rf.log = append(rf.log, entriesToAppend...)
-		rf.lastNewEntryIndex = len(rf.log) - 1
+		rf.log.append(entriesToAppend...)
+		rf.lastNewEntryIndex = rf.log.last().Index
 	}
 
 	// #5
@@ -116,9 +117,10 @@ func (rf *Raft) sendAERequestAndHandleReply(peerIndex int) {
 	currentTerm := rf.currentTerm
 	leaderId := rf.me
 	prevLogIndex := rf.nextIndex[peerIndex] - 1
-	prevLogTerm := rf.log[prevLogIndex].Term
-	entries := make([]LogEntry, len(rf.log[rf.nextIndex[peerIndex]:]))
-	copy(entries, rf.log[rf.nextIndex[peerIndex]:])
+	prevLogTerm := rf.log.get(prevLogIndex).Term
+	entriesLen := rf.log.nextIndex() - rf.nextIndex[peerIndex]
+	entries := make([]LogEntry, entriesLen)
+	copy(entries, rf.log.getRange(rf.nextIndex[peerIndex], rf.nextIndex[peerIndex]+entriesLen-1))
 	leaderCommit := rf.commitIndex
 	rf.mu.Unlock()
 
@@ -171,9 +173,9 @@ func (rf *Raft) sendAERequestAndHandleReply(peerIndex int) {
 		rf.successiveLogConflict[peerIndex] = 0
 	} else {
 		if LOG_BACKTRACKING_MODE == LOG_BT_TERM_BYPASS {
-			i := len(rf.log) - 1
-			for ; i > 0; i-- {
-				if rf.log[i].Term == reply.ConflictTerm {
+			i := rf.log.last().Index
+			for ; i > rf.log.first().Index; i-- {
+				if rf.log.get(i).Term == reply.ConflictTerm {
 					break
 				}
 			}
@@ -215,9 +217,9 @@ func (rf *Raft) sendAERequestAndHandleReply(peerIndex int) {
 	}
 	if majorityCount <= 0 {
 		rf.commitIndex = N
-		if rf.log[N].Term != currentTerm { // double check whether my implementation is correct
+		if rf.log.get(N).Term != currentTerm { // double check whether my implementation is correct
 			log.Fatalf("inst %d: AE Resp: Error: the newly committed log's term is %d, but current term is %d",
-				rf.me, rf.log[N].Term, currentTerm)
+				rf.me, rf.log.get(N).Term, currentTerm)
 		}
 		log.Printf("inst %d: AE Resp: leader commits new logs (commitIndex: %d)", rf.me, rf.commitIndex)
 	}

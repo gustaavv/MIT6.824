@@ -54,11 +54,6 @@ type ApplyMsg struct {
 	SnapshotIndex int
 }
 
-type LogEntry struct {
-	Term    int
-	Command interface{}
-}
-
 // Raft
 // A Go object implementing a single Raft peer.
 //
@@ -78,7 +73,7 @@ type Raft struct {
 	// persistent on all servers
 	currentTerm int
 	votedFor    int // use -1 as null
-	log         []LogEntry
+	log         raftLog
 
 	// volatile on all servers
 	commitIndex int
@@ -104,7 +99,7 @@ type Raft struct {
 func (rf *Raft) initVolatileLeaderState() {
 	// initialized to leader last log index + 1
 	for i := range rf.nextIndex {
-		rf.nextIndex[i] = len(rf.log)
+		rf.nextIndex[i] = rf.log.nextIndex()
 	}
 	for i := range rf.matchIndex {
 		rf.matchIndex[i] = 0
@@ -193,7 +188,7 @@ func (rf *Raft) readPersist(data []byte) {
 
 	var currentTerm int
 	var votedFor int
-	var raftLog []LogEntry
+	var raftLog raftLog
 
 	if d.Decode(&currentTerm) != nil ||
 		d.Decode(&votedFor) != nil ||
@@ -248,7 +243,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	index := len(rf.log)
+	index := rf.log.nextIndex()
 	term := rf.currentTerm
 	isLeader := rf.state == STATE_LEADER
 
@@ -256,7 +251,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		return -7, -23, isLeader
 	}
 
-	rf.log = append(rf.log, LogEntry{Term: term, Command: command})
+	rf.log.append(LogEntry{Term: term, Command: command, Index: index})
 	rf.persist()
 	log.Printf("inst %d: Start: leader appends a new log entry (index %d)", rf.me, index)
 
@@ -311,9 +306,9 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	rf.currentTerm = 0
 	rf.votedFor = -1
-	rf.log = make([]LogEntry, 0)
+	rf.log.Entries = make([]LogEntry, 0)
 	// log index begins at 1 and instances always need to agree on the very first log entry
-	rf.log = append(rf.log, LogEntry{Term: -1})
+	rf.log.append(LogEntry{Term: -1, Index: 0})
 
 	// volatile on all servers
 
@@ -338,6 +333,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.readPersist(persister.ReadRaftState())
 	// nextIndex is based on log[], so the init should be after reading persistent state
 	rf.initVolatileLeaderState()
+	// lastApplied points to the first index - 1 on init, and it needs to be greater than 0
+	rf.lastApplied = max(rf.log.first().Index-1, 0)
 
 	log.Printf("inst %d: start as follower", rf.me)
 
