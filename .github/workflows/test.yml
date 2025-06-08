@@ -22,6 +22,10 @@ jobs:
             command: cd src/raft && time go test -run 2B -race
           - name: Lab 2C
             command: cd src/raft && time go test -run 2C -race
+          - name: Lab 2D
+            command: cd src/raft && time go test -run 2D -race
+          - name: Lab 2
+            command: cd src/raft && time go test -race
 
       fail-fast: false
 
