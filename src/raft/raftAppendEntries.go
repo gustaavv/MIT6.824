@@ -34,10 +34,10 @@ func (rf *Raft) sendAERequestAndHandleReply(peerIndex int) {
 	currentTerm := rf.currentTerm
 	leaderId := rf.me
 
-	if nextIndex := rf.nextIndex[peerIndex]; nextIndex <= rf.log.SnapShot.LastIncludedIndex {
+	if nextIndex := rf.nextIndex[peerIndex]; nextIndex <= rf.SnapShot.LastIncludedIndex {
 		// a lagging follower
 		log.Printf("inst %d: AE Req => IS Req: inst %d's nextIndex %d <= snapshot.LastIncludedIndex %d",
-			rf.me, peerIndex, nextIndex, rf.log.SnapShot.LastIncludedIndex)
+			rf.me, peerIndex, nextIndex, rf.SnapShot.LastIncludedIndex)
 		rf.mu.Unlock()
 		go rf.sendISRequestAndHandleReply(peerIndex)
 		return
@@ -45,8 +45,8 @@ func (rf *Raft) sendAERequestAndHandleReply(peerIndex int) {
 
 	//log.Printf("inst %d: AE Req: inst %d's nextIndex: %d", rf.me, peerIndex, rf.nextIndex[peerIndex])
 
-	prevLogIndex := rf.log.SnapShot.LastIncludedIndex
-	prevLogTerm := rf.log.SnapShot.LastIncludedTerm
+	prevLogIndex := rf.SnapShot.LastIncludedIndex
+	prevLogTerm := rf.SnapShot.LastIncludedTerm
 
 	if pli := rf.nextIndex[peerIndex] - 1; rf.log.get(pli) != nil {
 		prevLogIndex = pli
@@ -205,17 +205,17 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	//	rf.me, args.PrevLogIndex, args.PrevLogTerm)
 
 	// #2
-	if rf.log.SnapShot.LastIncludedIndex == args.PrevLogIndex &&
-		rf.log.SnapShot.LastIncludedTerm == args.PrevLogTerm {
+	if rf.SnapShot.LastIncludedIndex == args.PrevLogIndex &&
+		rf.SnapShot.LastIncludedTerm == args.PrevLogTerm {
 		// reply should succeed in this case
 	} else if entry := rf.log.get(args.PrevLogIndex); !rf.log.isEmpty() && (entry == nil || entry.Term != args.PrevLogTerm) {
 		reply.Success = false
 		//log.Printf("inst %d: AE Req: log len: %d", rf.me, len(rf.log.Entries))
 	} else if rf.log.isEmpty() &&
-		!(rf.log.SnapShot.LastIncludedIndex == args.PrevLogIndex &&
-			rf.log.SnapShot.LastIncludedTerm == args.PrevLogTerm) {
+		!(rf.SnapShot.LastIncludedIndex == args.PrevLogIndex &&
+			rf.SnapShot.LastIncludedTerm == args.PrevLogTerm) {
 		//log.Printf("inst %d: AE Req: snapshot lastIncludedIndex=%d lastIncludedTerm=%d",
-		//	rf.me, rf.log.SnapShot.LastIncludedIndex, rf.log.SnapShot.LastIncludedTerm)
+		//	rf.me, rf.SnapShot.LastIncludedIndex, rf.SnapShot.LastIncludedTerm)
 		reply.Success = false
 	}
 
@@ -229,7 +229,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			} else if entry.Term != args.PrevLogTerm {
 				reply.ConflictTerm = entry.Term
 
-				if rf.log.SnapShot.LastIncludedTerm == reply.ConflictTerm {
+				if rf.SnapShot.LastIncludedTerm == reply.ConflictTerm {
 					// first index of conflictTerm is compacted in the snapshot already
 					reply.ConflictTerm = -1
 					reply.ConflictIndex = 1 // send snapshot in the next round

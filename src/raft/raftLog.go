@@ -9,8 +9,7 @@ type LogEntry struct {
 }
 
 type raftLog struct {
-	Entries  []LogEntry
-	SnapShot SnapShot
+	Entries []LogEntry
 }
 
 func (rl *raftLog) size() int {

@@ -25,9 +25,9 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 			rf.me, index, rf.log.first().Index, rf.log.last().Index)
 		return
 	}
-	if rf.log.SnapShot.LastIncludedIndex >= index {
+	if rf.SnapShot.LastIncludedIndex >= index {
 		log.Printf("inst %d: snapshot: old snapshot index %d >= new snapshot index %d",
-			rf.me, rf.log.SnapShot.LastIncludedIndex, index)
+			rf.me, rf.SnapShot.LastIncludedIndex, index)
 		return
 	}
 	if rf.lastApplied < index {
@@ -42,7 +42,7 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	newLogEntriesCopy := make([]LogEntry, len(newLogEntries))
 	copy(newLogEntriesCopy, newLogEntries)
 	rf.log.Entries = newLogEntriesCopy
-	rf.log.SnapShot = newSnapshot
+	rf.SnapShot = newSnapshot
 	log.Printf("inst %d: snapshot: new snapshot created: LastIndex: %d, LastTerm: %d",
 		rf.me, index, newSnapshot.LastIncludedTerm)
 }
@@ -67,10 +67,10 @@ func (rf *Raft) sendISRequestAndHandleReply(peerIndex int) {
 	rf.mu.Lock()
 	term := rf.currentTerm
 	leaderId := rf.me
-	lastIncludedIndex := rf.log.SnapShot.LastIncludedIndex
-	lastIncludedTerm := rf.log.SnapShot.LastIncludedTerm
-	data := make([]byte, len(rf.log.SnapShot.Data))
-	copy(data, rf.log.SnapShot.Data)
+	lastIncludedIndex := rf.SnapShot.LastIncludedIndex
+	lastIncludedTerm := rf.SnapShot.LastIncludedTerm
+	data := make([]byte, len(rf.SnapShot.Data))
+	copy(data, rf.SnapShot.Data)
 	rf.mu.Unlock()
 
 	args := new(InstallSnapshotArgs)
@@ -159,27 +159,28 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 	// Your code here (2D).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	defer rf.persist()
 
 	// #6 there exists a log entry matching lastIncludedTerm and lastIncludedIndex
 	if lastEntry := rf.log.get(lastIncludedIndex); lastEntry != nil && lastEntry.Term == lastIncludedTerm {
 		if rf.lastApplied <= lastIncludedIndex {
 			log.Printf("inst %d: CondIS: keep state: lastApplied %d <= lastIncludedIndex %d",
 				rf.me, rf.lastApplied, lastIncludedIndex)
-			// TODO: do nothing? Since lastApplied will eventually catch up lastIncludedIndex
+			// do nothing, since lastApplied will eventually catch up lastIncludedIndex
 			return false
-		} else if rf.log.SnapShot.LastIncludedIndex < lastIncludedIndex { // only keep the latest snapshot
+		} else if rf.SnapShot.LastIncludedIndex < lastIncludedIndex { // only keep the latest snapshot
 			log.Printf("inst %d: CondIS: keep state: old lastIncludedIndex %d <= new lastIncludedIndex %d",
-				rf.me, rf.log.SnapShot.LastIncludedIndex, lastIncludedIndex)
+				rf.me, rf.SnapShot.LastIncludedIndex, lastIncludedIndex)
 			// trim logs entries before LastIncludedIndex(including)
 			// i.e., retain log entries after LastIncludedIndex
 			newLogEntries := rf.log.getRangeStartFrom(lastIncludedIndex + 1)
 			rf.log.Entries = make([]LogEntry, len(newLogEntries))
 			copy(rf.log.Entries, newLogEntries)
 			// save the snapshot
-			rf.log.SnapShot.LastIncludedIndex = lastIncludedIndex
-			rf.log.SnapShot.LastIncludedTerm = lastIncludedTerm
-			rf.log.SnapShot.Data = snapshot
+			rf.SnapShot.LastIncludedIndex = lastIncludedIndex
+			rf.SnapShot.LastIncludedTerm = lastIncludedTerm
+			rf.SnapShot.Data = snapshot
+
+			rf.persist()
 
 			return false
 		}
@@ -191,12 +192,14 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 		// #7 discard the entire log
 		rf.log.Entries = make([]LogEntry, 0)
 		// save the snapshot
-		rf.log.SnapShot.LastIncludedIndex = lastIncludedIndex
-		rf.log.SnapShot.LastIncludedTerm = lastIncludedTerm
-		rf.log.SnapShot.Data = snapshot
-		// TODO: update other states?
+		rf.SnapShot.LastIncludedIndex = lastIncludedIndex
+		rf.SnapShot.LastIncludedTerm = lastIncludedTerm
+		rf.SnapShot.Data = snapshot
+		// update other states
 		rf.commitIndex = lastIncludedIndex
 		rf.lastApplied = lastIncludedIndex
+
+		rf.persist()
 
 		// #8 reset state machine
 		return true

@@ -75,6 +75,7 @@ type Raft struct {
 	currentTerm int
 	votedFor    int // use -1 as null
 	log         raftLog
+	SnapShot    SnapShot
 
 	// volatile on all servers
 	commitIndex int
@@ -100,7 +101,7 @@ type Raft struct {
 func (rf *Raft) initVolatileLeaderState() {
 	// initialized to leader last log index + 1
 	for i := range rf.nextIndex {
-		rf.nextIndex[i] = rf.log.SnapShot.LastIncludedIndex + 1
+		rf.nextIndex[i] = rf.SnapShot.LastIncludedIndex + 1
 		if !rf.log.isEmpty() {
 			rf.nextIndex[i] = rf.log.nextIndex()
 		}
@@ -146,8 +147,6 @@ func (rf *Raft) persist() {
 	// data := w.Bytes()
 	// rf.persister.SaveRaftState(data)
 
-	//log.Printf("inst %d: persist log start", rf.me)
-
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)
 	if err := e.Encode(rf.currentTerm); err != nil {
@@ -159,19 +158,27 @@ func (rf *Raft) persist() {
 	if err := e.Encode(rf.log); err != nil {
 		log.Fatalf("inst %d: persist log err: %v", rf.me, err)
 	}
+	stateData := w.Bytes()
 
-	data := w.Bytes()
+	w = new(bytes.Buffer)
+	e = labgob.NewEncoder(w)
+	if err := e.Encode(rf.SnapShot); err != nil {
+		log.Fatalf("inst %d: persist log err: %v", rf.me, err)
+	}
+	snapshotData := w.Bytes()
 
-	// TODO: Hint #6: use SaveStateAndSnapshot()
-	rf.persister.SaveRaftState(data)
+	rf.persister.SaveStateAndSnapshot(stateData, snapshotData)
 	//log.Printf("inst %d: persist log finished, data len: %d", rf.me, len(data))
 }
 
 //
 // restore previously persisted state.
 //
-func (rf *Raft) readPersist(data []byte) {
-	if data == nil || len(data) < 1 { // bootstrap without any state?
+func (rf *Raft) readPersist(stateData []byte, snapshotData []byte) {
+	if stateData == nil || len(stateData) < 1 { // bootstrap without any state?
+		return
+	}
+	if snapshotData == nil || len(snapshotData) < 1 {
 		return
 	}
 	// Your code here (2C).
@@ -188,7 +195,7 @@ func (rf *Raft) readPersist(data []byte) {
 	//   rf.yyy = yyy
 	// }
 
-	r := bytes.NewBuffer(data)
+	r := bytes.NewBuffer(stateData)
 	d := labgob.NewDecoder(r)
 
 	var currentTerm int
@@ -204,8 +211,21 @@ func (rf *Raft) readPersist(data []byte) {
 		rf.votedFor = votedFor
 		rf.log = raftLog
 	}
-	log.Printf("inst %d: readPersist: restore previously persisted state, currentTerm: %d, votedFor: %d",
-		rf.me, rf.currentTerm, votedFor)
+
+	r = bytes.NewBuffer(snapshotData)
+	d = labgob.NewDecoder(r)
+	var snapShot SnapShot
+	if d.Decode(&snapShot) != nil {
+		log.Printf("inst $%d: readPersist: error happens when decoding", rf.me)
+	} else {
+		rf.SnapShot = snapShot
+	}
+
+	log.Printf("inst %d: readPersist: restore (1) state: currentTerm: %d, votedFor: %d (2) snapshot: lastIncludeIndex: %d, lastIncludeTerm: %d",
+		rf.me,
+		rf.currentTerm, votedFor,
+		snapShot.LastIncludedIndex, snapShot.LastIncludedTerm,
+	)
 }
 
 // Start
@@ -227,7 +247,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	index := rf.log.SnapShot.LastIncludedIndex + 1
+	index := rf.SnapShot.LastIncludedIndex + 1
 	if !rf.log.isEmpty() {
 		index = rf.log.nextIndex()
 	}
@@ -325,11 +345,11 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.firstLogIndexCurrentTerm = 0
 	rf.successiveLogConflict = make([]int, len(rf.peers))
 
-	// initialize from state persisted before a crash
-	rf.readPersist(persister.ReadRaftState())
+	// initialize from state persisted and snapshot before a crash
+	rf.readPersist(persister.ReadRaftState(), persister.ReadSnapshot())
 	// nextIndex is based on log[], so the init should be after reading persistent state
 	rf.initVolatileLeaderState()
-	rf.lastApplied = rf.log.SnapShot.LastIncludedIndex
+	rf.lastApplied = rf.SnapShot.LastIncludedIndex
 
 	log.Printf("inst %d: start as follower", rf.me)
 

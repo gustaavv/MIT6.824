@@ -63,8 +63,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	// #2
-	voterLastLogIndex := rf.log.SnapShot.LastIncludedIndex
-	voterLastLogTerm := rf.log.SnapShot.LastIncludedTerm
+	voterLastLogIndex := rf.SnapShot.LastIncludedIndex
+	voterLastLogTerm := rf.SnapShot.LastIncludedTerm
 
 	if !rf.log.isEmpty() {
 		voterLastLogEntry := rf.log.last()
@@ -185,8 +185,8 @@ func (rf *Raft) electionTimeoutTicker() {
 		term := rf.currentTerm
 		candidateId := rf.me
 
-		lastLogIndex := rf.log.SnapShot.LastIncludedIndex
-		lastLogTerm := rf.log.SnapShot.LastIncludedTerm
+		lastLogIndex := rf.SnapShot.LastIncludedIndex
+		lastLogTerm := rf.SnapShot.LastIncludedTerm
 
 		if !rf.log.isEmpty() {
 			lastLogEntry := rf.log.last()
@@ -280,7 +280,7 @@ func (rf *Raft) electionTimeoutTicker() {
 			log.Printf("inst %d: ticker: candidate becomes leader at term %d", rf.me, rf.currentTerm)
 			rf.state = STATE_LEADER
 			rf.initVolatileLeaderState()
-			rf.firstLogIndexCurrentTerm = rf.log.SnapShot.LastIncludedIndex + 1
+			rf.firstLogIndexCurrentTerm = rf.SnapShot.LastIncludedIndex + 1
 			if !rf.log.isEmpty() {
 				rf.firstLogIndexCurrentTerm = rf.log.nextIndex()
 			}
