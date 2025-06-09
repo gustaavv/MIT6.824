@@ -26,7 +26,7 @@ type AppendEntriesReply struct {
 	ConflictTerm  int // use -1 as null
 }
 
-func (rf *Raft) sendAERequestAndHandleReply(peerIndex int) {
+func (rf *Raft) sendAERequestAndHandleReply(peerIndex int, conflictRetries int) {
 	peer := rf.peers[peerIndex]
 
 	// copy rf's state before putting into args
@@ -167,10 +167,15 @@ func (rf *Raft) sendAERequestAndHandleReply(peerIndex int) {
 	if majorityCount <= 0 {
 		rf.commitIndex = N
 		if rf.log.get(N).Term != currentTerm { // double check whether my implementation is correct
-			log.Fatalf("inst %d: AE Resp: Error: the newly committed log's term is %d, but current term is %d",
-				rf.me, rf.log.get(N).Term, currentTerm)
+			log.Fatalf("inst %d: AE Resp: Error: the newly committed log's term is %d, but current term is %d. commitIndex: %d",
+				rf.me, rf.log.get(N).Term, currentTerm, rf.commitIndex)
 		}
 		log.Printf("inst %d: AE Resp: leader commits new logs (commitIndex: %d)", rf.me, rf.commitIndex)
+	}
+
+	// fast retry
+	if !reply.Success && conflictRetries > 0 {
+		go rf.sendAERequestAndHandleReply(peerIndex, conflictRetries-1)
 	}
 }
 
@@ -287,7 +292,7 @@ func (rf *Raft) sendHeartbeats() {
 		if i == rf.me {
 			continue
 		}
-		go rf.sendAERequestAndHandleReply(i)
+		go rf.sendAERequestAndHandleReply(i, AE_CONFLICT_RETRIES)
 	}
 }
 

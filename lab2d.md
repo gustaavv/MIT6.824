@@ -15,6 +15,12 @@ The snapshot mechanism requires a new RPC handler.
 
 When the leader wants to send an AppendEntries RPC request, if `nextIndex` is no greater than the snapshot's `LastIncludedIndex`, which means the follower is lagging behind, an InstallSnapshot RPC request will be sent instead.
 
+### Optimization
+
+1️⃣ After state machine calls `Start()`, the leader sends AppendEntries RPC requests immediately instead of relying on the heartbeat to send the newly appended log entry.
+
+2️⃣ Fast retry when an AppendEntries RPC reply suggests that there is a conflict in log.
+
 ## Experiences
 
 ### Difficulty

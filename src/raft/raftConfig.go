@@ -43,6 +43,8 @@ const ELECTION_TIMEOUT_MAX_TIME_MS = 1000
 // "the tester limits you to 10 heartbeats per second"
 const HEARTBEAT_FERQUENCY = time.Millisecond * 107
 
+const AE_CONFLICT_RETRIES = 3
+
 ///////////////////////////////////////////////////////////////////////////////
 
 var configLock sync.Mutex
