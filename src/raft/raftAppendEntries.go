@@ -110,18 +110,26 @@ func (rf *Raft) sendAERequestAndHandleReply(peerIndex int) {
 				rf.nextIndex[peerIndex] = rf.matchIndex[peerIndex] + 1
 			}
 		}
-		rf.successiveLogConflict[peerIndex] = 0
+		rf.successiveLogConflict[peerIndex] = SUCCESSIVE_CONFLICT_OFFSET
 	} else {
+		// TODO: fix this mode
 		if LOG_BACKTRACKING_MODE == LOG_BT_TERM_BYPASS {
-			// TODO: fix this mode
-			i := rf.log.last().Index
-			for ; i > rf.log.first().Index; i-- {
-				if rf.log.get(i).Term == reply.ConflictTerm {
-					break
+			i := -1
+			if !rf.log.isEmpty() {
+				i = rf.log.last().Index
+				flag := true
+				for ; i > rf.log.first().Index; i-- {
+					if rf.log.get(i).Term == reply.ConflictTerm {
+						flag = false
+						break
+					}
+				}
+				if flag {
+					i = -1
 				}
 			}
 
-			if i > 0 {
+			if i >= rf.log.first().Index {
 				rf.nextIndex[peerIndex] = i + 1
 			} else {
 				rf.nextIndex[peerIndex] = reply.ConflictIndex
@@ -168,6 +176,7 @@ func (rf *Raft) sendAERequestAndHandleReply(peerIndex int) {
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	reply.TraceId = args.TraceId
+	reply.Success = true
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	defer rf.persist()
@@ -192,24 +201,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.state = STATE_FOLLOWER
 	}
 
-	if LOG_BACKTRACKING_MODE == LOG_BT_TERM_BYPASS {
-		// TODO: fix this mode
-		if args.PrevLogIndex >= rf.log.nextIndex() {
-			reply.ConflictTerm = -1
-			reply.ConflictIndex = rf.log.nextIndex()
-		} else if entry := rf.log.get(args.PrevLogIndex); entry != nil && entry.Term != args.PrevLogTerm {
-			reply.ConflictTerm = entry.Term
-
-			// the student's guide does not say to store the search result into ConflictIndex.
-			// But I guess we should do this
-			reply.ConflictIndex = args.PrevLogIndex
-			for reply.ConflictIndex-1 >= rf.log.first().Index &&
-				rf.log.get(reply.ConflictIndex-1).Term == reply.ConflictTerm {
-				reply.ConflictIndex--
-			}
-		}
-	}
-
 	//log.Printf("inst %d: AE Req: arg PrevLogIndex: %d, PrevLogTerm: %d",
 	//	rf.me, args.PrevLogIndex, args.PrevLogTerm)
 
@@ -220,17 +211,44 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	} else if entry := rf.log.get(args.PrevLogIndex); !rf.log.isEmpty() && (entry == nil || entry.Term != args.PrevLogTerm) {
 		reply.Success = false
 		//log.Printf("inst %d: AE Req: log len: %d", rf.me, len(rf.log.Entries))
-		return
 	} else if rf.log.isEmpty() &&
 		!(rf.log.SnapShot.LastIncludedIndex == args.PrevLogIndex &&
 			rf.log.SnapShot.LastIncludedTerm == args.PrevLogTerm) {
 		//log.Printf("inst %d: AE Req: snapshot lastIncludedIndex=%d lastIncludedTerm=%d",
 		//	rf.me, rf.log.SnapShot.LastIncludedIndex, rf.log.SnapShot.LastIncludedTerm)
 		reply.Success = false
-		return
 	}
 
-	reply.Success = true
+	if !reply.Success {
+		// TODO: fix this mode
+		if LOG_BACKTRACKING_MODE == LOG_BT_TERM_BYPASS {
+			entry := rf.log.get(args.PrevLogIndex)
+			if entry == nil {
+				reply.ConflictTerm = -1
+				reply.ConflictIndex = 1 // send snapshot in the next round
+			} else if entry.Term != args.PrevLogTerm {
+				reply.ConflictTerm = entry.Term
+
+				if rf.log.SnapShot.LastIncludedTerm == reply.ConflictTerm {
+					// first index of conflictTerm is compacted in the snapshot already
+					reply.ConflictTerm = -1
+					reply.ConflictIndex = 1 // send snapshot in the next round
+				} else {
+					// the student's guide does not say to store the search result into ConflictIndex.
+					// But I guess we should do this
+					reply.ConflictIndex = args.PrevLogIndex
+					for reply.ConflictIndex-1 >= rf.log.first().Index &&
+						rf.log.get(reply.ConflictIndex-1).Term == reply.ConflictTerm {
+						reply.ConflictIndex--
+					}
+				}
+			}
+			log.Printf("inst %d: AE Req: conflictIndex: %d, conflictTerm: %d",
+				rf.me, reply.ConflictIndex, reply.ConflictTerm)
+		}
+
+		return
+	}
 
 	// #3
 	i := args.PrevLogIndex + 1

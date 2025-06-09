@@ -108,7 +108,7 @@ func (rf *Raft) sendISRequestAndHandleReply(peerIndex int) {
 	}
 
 	rf.nextIndex[peerIndex] = max(lastIncludedIndex+1, rf.nextIndex[peerIndex])
-	rf.successiveLogConflict[peerIndex] = 0
+	rf.successiveLogConflict[peerIndex] = SUCCESSIVE_CONFLICT_OFFSET
 	log.Printf("inst %d: IS Resp: inst %d's new nextIndex: %d", rf.me, peerIndex, rf.nextIndex[peerIndex])
 }
 

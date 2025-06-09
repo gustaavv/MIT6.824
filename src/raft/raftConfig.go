@@ -17,6 +17,8 @@ const TICKER_FREQUENCY = time.Millisecond * 1
 
 const APPLY_LOGENTRY_FREQUENCY = time.Millisecond * 1
 
+const SUCCESSIVE_CONFLICT_OFFSET = 3
+
 const LOG_BT_ORIGINAL = 1
 const LOG_BT_BIN_EXP = 2
 const LOG_BT_TERM_BYPASS = 3
@@ -70,7 +72,7 @@ func validateLogBacktrackingMode() {
 	case LOG_BT_BIN_EXP:
 		log.Print("log backtracking mode: binary exponential")
 	case LOG_BT_TERM_BYPASS:
-		log.Print("log backtracking mode: conflict term bypassing")
+		log.Fatalf("log backtracking mode: conflict term bypassing. Unfortunately, this mode is not supported after lab2c. You should switch to other mode")
 	case LOG_BT_AGGRESSIVE:
 		log.Print("log backtracking mode: super aggressive")
 	default:

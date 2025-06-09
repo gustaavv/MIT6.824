@@ -113,7 +113,7 @@ func (rf *Raft) initVolatileLeaderState() {
 	// for convenience, put the init/re-init of relevant fields here
 
 	for i := range rf.successiveLogConflict {
-		rf.successiveLogConflict[i] = 0
+		rf.successiveLogConflict[i] = SUCCESSIVE_CONFLICT_OFFSET
 	}
 }
 
@@ -242,7 +242,13 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.persist()
 	log.Printf("inst %d: Start: leader appends a new log entry (index %d)", rf.me, index)
 
-	// TODO: send AE RPC immediately. Create a new goroutine to send.
+	// send AE RPC immediately. Create a new goroutine to send.
+	go func() {
+		rf.mu.Lock()
+		rf.sendHeartbeats()
+		rf.heartbeatAt = getNextHeartbeatTime()
+		defer rf.mu.Unlock()
+	}()
 
 	return index, term, isLeader
 }
