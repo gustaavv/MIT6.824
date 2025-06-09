@@ -6,6 +6,7 @@ import (
 )
 
 type AppendEntriesArgs struct {
+	TraceId      int
 	Term         int
 	LeaderId     int
 	PrevLogIndex int
@@ -15,6 +16,7 @@ type AppendEntriesArgs struct {
 }
 
 type AppendEntriesReply struct {
+	TraceId int
 	Term    int
 	Success bool
 
@@ -22,97 +24,6 @@ type AppendEntriesReply struct {
 
 	ConflictIndex int // use -1 as null
 	ConflictTerm  int // use -1 as null
-}
-
-func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	defer rf.persist()
-
-	// #1
-	if args.Term < rf.currentTerm { // outdated leader
-		reply.Term = rf.currentTerm
-		reply.Success = false
-		return
-	}
-
-	// it's safe to reset election timeout for both follower and candidate state here
-	// because there is only one leader per term
-	rf.electionTimeoutAt = getNextElectionTimeout()
-	reply.Term = args.Term
-
-	if args.Term > rf.currentTerm {
-		log.Printf("inst %d: AE Req: %v becomes follower because leader (inst %d) with higher term: %d -> %d",
-			rf.me, rf.state, args.LeaderId, rf.currentTerm, args.Term)
-		rf.currentTerm = args.Term
-		rf.votedFor = -1
-		rf.state = STATE_FOLLOWER
-	}
-
-	if LOG_BACKTRACKING_MODE == LOG_BT_TERM_BYPASS && !rf.log.isEmpty() {
-		if args.PrevLogIndex >= rf.log.nextIndex() {
-			reply.ConflictTerm = -1
-			reply.ConflictIndex = rf.log.nextIndex()
-		} else if entry := rf.log.get(args.PrevLogIndex); entry != nil && entry.Term != args.PrevLogTerm {
-			reply.ConflictTerm = entry.Term
-
-			// the student's guide does not say to store the search result into ConflictIndex.
-			// But I guess we should do this
-			reply.ConflictIndex = args.PrevLogIndex
-			for reply.ConflictIndex-1 >= rf.log.first().Index &&
-				rf.log.get(reply.ConflictIndex-1).Term == reply.ConflictTerm {
-				reply.ConflictIndex--
-			}
-		}
-	}
-
-	// #2
-	if entry := rf.log.get(args.PrevLogIndex); !rf.log.isEmpty() && (entry == nil || entry.Term != args.PrevLogTerm) {
-		reply.Success = false
-		return
-	}
-	if rf.log.isEmpty() &&
-		!(rf.log.SnapShot.LastIncludedIndex == args.PrevLogIndex &&
-			rf.log.SnapShot.LastIncludedTerm == args.PrevLogTerm) {
-		reply.Success = false
-		return
-	}
-
-	reply.Success = true
-
-	// #3
-	i := args.PrevLogIndex + 1
-	j := 0
-	for !rf.log.isEmpty() && i < rf.log.nextIndex() && j < len(args.Entries) {
-		if rf.log.get(i).Term != args.Entries[j].Term { // conflict happens.
-			rf.log.Entries = rf.log.getRange(rf.log.first().Index, i-1) // delete existing entries
-			//i = rf.log.nextIndex()
-			break
-		}
-		i++
-		j++
-	}
-
-	// #4
-	if j < len(args.Entries) { // new entries
-		// data race happens when appending args.Entries[j:] directly into rf.log
-		// I don't know why gob read cause such data race
-		entriesToAppend := make([]LogEntry, len(args.Entries[j:]))
-		copy(entriesToAppend, args.Entries[j:])
-
-		rf.log.append(entriesToAppend...)
-		rf.lastNewEntryIndex = rf.log.last().Index
-	}
-
-	// #5
-	if args.LeaderCommit > rf.commitIndex && rf.lastNewEntryIndex != -1 {
-		rf.commitIndex = min(args.LeaderCommit, rf.lastNewEntryIndex)
-		log.Printf("inst %d: AE Req: follower commits new logs (commitIndex: %d)", rf.me, rf.commitIndex)
-	}
-}
-
-func getNextHeartbeatTime() time.Time {
-	return time.Now().Add(HEARTBEAT_FERQUENCY)
 }
 
 func (rf *Raft) sendAERequestAndHandleReply(peerIndex int) {
@@ -132,6 +43,8 @@ func (rf *Raft) sendAERequestAndHandleReply(peerIndex int) {
 		return
 	}
 
+	//log.Printf("inst %d: AE Req: inst %d's nextIndex: %d", rf.me, peerIndex, rf.nextIndex[peerIndex])
+
 	prevLogIndex := rf.log.SnapShot.LastIncludedIndex
 	prevLogTerm := rf.log.SnapShot.LastIncludedTerm
 
@@ -150,6 +63,7 @@ func (rf *Raft) sendAERequestAndHandleReply(peerIndex int) {
 	rf.mu.Unlock()
 
 	args := new(AppendEntriesArgs)
+	args.TraceId = getNextTraceId()
 	args.Term = currentTerm
 	args.LeaderId = leaderId
 	args.PrevLogIndex = prevLogIndex
@@ -167,6 +81,7 @@ func (rf *Raft) sendAERequestAndHandleReply(peerIndex int) {
 	// verify reply
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	//log.Printf("inst %d: AE Resp: inst %d reply success: %v", rf.me, peerIndex, reply.Success)
 
 	if rf.state != STATE_LEADER { // only leader needs to handle AppendEntries RPC reply
 		return
@@ -198,6 +113,7 @@ func (rf *Raft) sendAERequestAndHandleReply(peerIndex int) {
 		rf.successiveLogConflict[peerIndex] = 0
 	} else {
 		if LOG_BACKTRACKING_MODE == LOG_BT_TERM_BYPASS {
+			// TODO: fix this mode
 			i := rf.log.last().Index
 			for ; i > rf.log.first().Index; i-- {
 				if rf.log.get(i).Term == reply.ConflictTerm {
@@ -250,6 +166,103 @@ func (rf *Raft) sendAERequestAndHandleReply(peerIndex int) {
 	}
 }
 
+func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
+	reply.TraceId = args.TraceId
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	defer rf.persist()
+
+	// #1
+	if args.Term < rf.currentTerm { // outdated leader
+		reply.Term = rf.currentTerm
+		reply.Success = false
+		return
+	}
+
+	// it's safe to reset election timeout for both follower and candidate state here
+	// because there is only one leader per term
+	rf.electionTimeoutAt = getNextElectionTimeout()
+	reply.Term = args.Term
+
+	if args.Term > rf.currentTerm {
+		log.Printf("inst %d: AE Req: %v becomes follower because leader (inst %d) with higher term: %d -> %d",
+			rf.me, rf.state, args.LeaderId, rf.currentTerm, args.Term)
+		rf.currentTerm = args.Term
+		rf.votedFor = -1
+		rf.state = STATE_FOLLOWER
+	}
+
+	if LOG_BACKTRACKING_MODE == LOG_BT_TERM_BYPASS {
+		// TODO: fix this mode
+		if args.PrevLogIndex >= rf.log.nextIndex() {
+			reply.ConflictTerm = -1
+			reply.ConflictIndex = rf.log.nextIndex()
+		} else if entry := rf.log.get(args.PrevLogIndex); entry != nil && entry.Term != args.PrevLogTerm {
+			reply.ConflictTerm = entry.Term
+
+			// the student's guide does not say to store the search result into ConflictIndex.
+			// But I guess we should do this
+			reply.ConflictIndex = args.PrevLogIndex
+			for reply.ConflictIndex-1 >= rf.log.first().Index &&
+				rf.log.get(reply.ConflictIndex-1).Term == reply.ConflictTerm {
+				reply.ConflictIndex--
+			}
+		}
+	}
+
+	//log.Printf("inst %d: AE Req: arg PrevLogIndex: %d, PrevLogTerm: %d",
+	//	rf.me, args.PrevLogIndex, args.PrevLogTerm)
+
+	// #2
+	if rf.log.SnapShot.LastIncludedIndex == args.PrevLogIndex &&
+		rf.log.SnapShot.LastIncludedTerm == args.PrevLogTerm {
+		// reply should succeed in this case
+	} else if entry := rf.log.get(args.PrevLogIndex); !rf.log.isEmpty() && (entry == nil || entry.Term != args.PrevLogTerm) {
+		reply.Success = false
+		//log.Printf("inst %d: AE Req: log len: %d", rf.me, len(rf.log.Entries))
+		return
+	} else if rf.log.isEmpty() &&
+		!(rf.log.SnapShot.LastIncludedIndex == args.PrevLogIndex &&
+			rf.log.SnapShot.LastIncludedTerm == args.PrevLogTerm) {
+		//log.Printf("inst %d: AE Req: snapshot lastIncludedIndex=%d lastIncludedTerm=%d",
+		//	rf.me, rf.log.SnapShot.LastIncludedIndex, rf.log.SnapShot.LastIncludedTerm)
+		reply.Success = false
+		return
+	}
+
+	reply.Success = true
+
+	// #3
+	i := args.PrevLogIndex + 1
+	j := 0
+	for !rf.log.isEmpty() && i < rf.log.nextIndex() && j < len(args.Entries) {
+		if rf.log.get(i).Term != args.Entries[j].Term { // conflict happens.
+			rf.log.Entries = rf.log.getRange(rf.log.first().Index, i-1) // delete existing entries
+			//i = rf.log.nextIndex()
+			break
+		}
+		i++
+		j++
+	}
+
+	// #4
+	if j < len(args.Entries) { // new entries
+		// data race happens when appending args.Entries[j:] directly into rf.log
+		// I don't know why gob read cause such data race
+		entriesToAppend := make([]LogEntry, len(args.Entries[j:]))
+		copy(entriesToAppend, args.Entries[j:])
+
+		rf.log.append(entriesToAppend...)
+		rf.lastNewEntryIndex = rf.log.last().Index
+	}
+
+	// #5
+	if args.LeaderCommit > rf.commitIndex && rf.lastNewEntryIndex != -1 {
+		rf.commitIndex = min(args.LeaderCommit, rf.lastNewEntryIndex)
+		log.Printf("inst %d: AE Req: follower commits new logs (commitIndex: %d)", rf.me, rf.commitIndex)
+	}
+}
+
 // This function must be called in the critical section
 func (rf *Raft) sendHeartbeats() {
 	for i := range rf.peers {
@@ -258,6 +271,10 @@ func (rf *Raft) sendHeartbeats() {
 		}
 		go rf.sendAERequestAndHandleReply(i)
 	}
+}
+
+func getNextHeartbeatTime() time.Time {
+	return time.Now().Add(HEARTBEAT_FERQUENCY)
 }
 
 func (rf *Raft) heartbeatTicker() {

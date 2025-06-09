@@ -13,6 +13,8 @@ import (
 //
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
+
+	TraceId      int
 	Term         int
 	CandidateId  int
 	LastLogIndex int
@@ -25,6 +27,8 @@ type RequestVoteArgs struct {
 //
 type RequestVoteReply struct {
 	// Your data here (2A).
+
+	TraceId     int
 	Term        int
 	VoteGranted bool
 }
@@ -34,6 +38,8 @@ type RequestVoteReply struct {
 //
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
+
+	reply.TraceId = args.TraceId
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	defer rf.persist()
@@ -178,9 +184,15 @@ func (rf *Raft) electionTimeoutTicker() {
 
 		term := rf.currentTerm
 		candidateId := rf.me
-		lastLogEntry := rf.log.last()
-		lastLogIndex := lastLogEntry.Index
-		lastLogTerm := lastLogEntry.Term
+
+		lastLogIndex := rf.log.SnapShot.LastIncludedIndex
+		lastLogTerm := rf.log.SnapShot.LastIncludedTerm
+
+		if !rf.log.isEmpty() {
+			lastLogEntry := rf.log.last()
+			lastLogIndex = lastLogEntry.Index
+			lastLogTerm = lastLogEntry.Term
+		}
 
 		for i, peer := range rf.peers {
 			if i == rf.me {
@@ -190,6 +202,7 @@ func (rf *Raft) electionTimeoutTicker() {
 			peer := peer
 			go func() {
 				args := new(RequestVoteArgs)
+				args.TraceId = getNextTraceId()
 				args.Term = term
 				args.CandidateId = candidateId
 				args.LastLogIndex = lastLogIndex
@@ -267,7 +280,10 @@ func (rf *Raft) electionTimeoutTicker() {
 			log.Printf("inst %d: ticker: candidate becomes leader at term %d", rf.me, rf.currentTerm)
 			rf.state = STATE_LEADER
 			rf.initVolatileLeaderState()
-			rf.firstLogIndexCurrentTerm = rf.log.nextIndex()
+			rf.firstLogIndexCurrentTerm = rf.log.SnapShot.LastIncludedIndex + 1
+			if !rf.log.isEmpty() {
+				rf.firstLogIndexCurrentTerm = rf.log.nextIndex()
+			}
 			rf.heartbeatAt = time.Now()
 
 			// send heartbeat immediately after becoming a leader

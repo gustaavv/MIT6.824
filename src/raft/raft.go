@@ -100,7 +100,10 @@ type Raft struct {
 func (rf *Raft) initVolatileLeaderState() {
 	// initialized to leader last log index + 1
 	for i := range rf.nextIndex {
-		rf.nextIndex[i] = rf.log.nextIndex()
+		rf.nextIndex[i] = rf.log.SnapShot.LastIncludedIndex + 1
+		if !rf.log.isEmpty() {
+			rf.nextIndex[i] = rf.log.nextIndex()
+		}
 	}
 	for i := range rf.matchIndex {
 		rf.matchIndex[i] = 0
@@ -320,8 +323,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.readPersist(persister.ReadRaftState())
 	// nextIndex is based on log[], so the init should be after reading persistent state
 	rf.initVolatileLeaderState()
-	// lastApplied points to the first index - 1 on init, and it needs to be greater than 0
-	rf.lastApplied = max(rf.log.first().Index-1, 0)
+	rf.lastApplied = rf.log.SnapShot.LastIncludedIndex
 
 	log.Printf("inst %d: start as follower", rf.me)
 

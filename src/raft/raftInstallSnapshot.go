@@ -48,6 +48,7 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 }
 
 type InstallSnapshotArgs struct {
+	TraceId           int
 	Term              int
 	LeaderId          int
 	LastIncludedIndex int
@@ -56,7 +57,8 @@ type InstallSnapshotArgs struct {
 }
 
 type InstallSnapshotReply struct {
-	Term int
+	TraceId int
+	Term    int
 }
 
 func (rf *Raft) sendISRequestAndHandleReply(peerIndex int) {
@@ -72,6 +74,7 @@ func (rf *Raft) sendISRequestAndHandleReply(peerIndex int) {
 	rf.mu.Unlock()
 
 	args := new(InstallSnapshotArgs)
+	args.TraceId = getNextTraceId()
 	args.Term = term
 	args.LeaderId = leaderId
 	args.LastIncludedIndex = lastIncludedIndex
@@ -104,18 +107,19 @@ func (rf *Raft) sendISRequestAndHandleReply(peerIndex int) {
 		return
 	}
 
-	if rf.matchIndex[peerIndex] < lastIncludedIndex {
-		rf.matchIndex[peerIndex] = lastIncludedIndex
-		rf.nextIndex[peerIndex] = lastIncludedIndex + 1
-	}
+	rf.nextIndex[peerIndex] = max(lastIncludedIndex+1, rf.nextIndex[peerIndex])
+	rf.successiveLogConflict[peerIndex] = 0
+	log.Printf("inst %d: IS Resp: inst %d's new nextIndex: %d", rf.me, peerIndex, rf.nextIndex[peerIndex])
 }
 
 func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
+	reply.TraceId = args.TraceId
 	rf.mu.Lock()
 
 	// #1
 	if args.Term < rf.currentTerm { // outdated leader
 		reply.Term = rf.currentTerm
+		rf.mu.Unlock()
 		return
 	}
 
@@ -133,10 +137,9 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 
 	// #2 - #5 passed
 	// #6 - #8 is in CondInstallSnapshot
+	log.Printf("inst %d: IS Req: receive snapshot from inst %d, lastLogIndex: %d, lastLogTerm: %d. lastApplied: %d, commitIndex: %d",
+		rf.me, args.LeaderId, args.LastIncludedIndex, args.LastIncludedTerm, rf.lastApplied, rf.commitIndex)
 	rf.mu.Unlock()
-
-	log.Printf("inst %d: IS Req: receive snapshot from inst %d, lastLogIndex: %d, lastLogTerm: %d",
-		rf.me, args.LeaderId, args.LastIncludedIndex, args.LastIncludedTerm)
 
 	// sending to channel should not be in critical sections
 	rf.applyCh <- ApplyMsg{
@@ -153,7 +156,6 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 // have more recent info since it communicate the snapshot on applyCh.
 //
 func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int, snapshot []byte) bool {
-
 	// Your code here (2D).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -162,9 +164,13 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 	// #6 there exists a log entry matching lastIncludedTerm and lastIncludedIndex
 	if lastEntry := rf.log.get(lastIncludedIndex); lastEntry != nil && lastEntry.Term == lastIncludedTerm {
 		if rf.lastApplied <= lastIncludedIndex {
+			log.Printf("inst %d: CondIS: keep state: lastApplied %d <= lastIncludedIndex %d",
+				rf.me, rf.lastApplied, lastIncludedIndex)
 			// TODO: do nothing? Since lastApplied will eventually catch up lastIncludedIndex
 			return false
 		} else if rf.log.SnapShot.LastIncludedIndex < lastIncludedIndex { // only keep the latest snapshot
+			log.Printf("inst %d: CondIS: keep state: old lastIncludedIndex %d <= new lastIncludedIndex %d",
+				rf.me, rf.log.SnapShot.LastIncludedIndex, lastIncludedIndex)
 			// trim logs entries before LastIncludedIndex(including)
 			// i.e., retain log entries after LastIncludedIndex
 			newLogEntries := rf.log.getRangeStartFrom(lastIncludedIndex + 1)
@@ -179,6 +185,9 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 		}
 
 	} else if rf.lastApplied < lastIncludedIndex {
+		log.Printf("inst %d: CondIS: Reset state: lastApplied %d <= lastIncludedIndex %d",
+			rf.me, rf.lastApplied, lastIncludedIndex)
+
 		// #7 discard the entire log
 		rf.log.Entries = make([]LogEntry, 0)
 		// save the snapshot
