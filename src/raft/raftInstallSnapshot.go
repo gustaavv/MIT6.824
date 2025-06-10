@@ -205,5 +205,8 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 		return true
 	}
 
+	log.Printf("inst %d: CondIS: old useless snapshot: lastIncludedTerm: %d, lastIncludedIndex: %d, lastApplied: %d",
+		rf.me, lastIncludedTerm, lastIncludedIndex, rf.lastApplied)
+
 	return false
 }

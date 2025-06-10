@@ -8,7 +8,10 @@ package raft
 // test with the original before submitting.
 //
 
-import "testing"
+import (
+	"log"
+	"testing"
+)
 import "fmt"
 import "time"
 import "math/rand"
@@ -21,11 +24,22 @@ const RaftElectionTimeout = 1000 * time.Millisecond
 
 func out(s string) {
 	if ENABLE_TEST_VERBOSE {
-		fmt.Println(s)
+		log.Println(s)
 	}
 }
 
+func outHeader(testName string) {
+	configLock.Lock()
+	defer configLock.Unlock()
+	if !logInited {
+		return
+	}
+	out("===========================================================================")
+	out(testName)
+}
+
 func TestInitialElection2A(t *testing.T) {
+	outHeader("TestInitialElection2A")
 	servers := 3
 	cfg := make_config(t, servers, false, false)
 	defer cfg.cleanup()
@@ -57,6 +71,7 @@ func TestInitialElection2A(t *testing.T) {
 }
 
 func TestReElection2A(t *testing.T) {
+	outHeader("TestReElection2A")
 	servers := 3
 	cfg := make_config(t, servers, false, false)
 	defer cfg.cleanup()
@@ -100,6 +115,7 @@ func TestReElection2A(t *testing.T) {
 }
 
 func TestManyElections2A(t *testing.T) {
+	outHeader("TestManyElections2A")
 	servers := 7
 	cfg := make_config(t, servers, false, false)
 	defer cfg.cleanup()
@@ -138,6 +154,7 @@ func TestManyElections2A(t *testing.T) {
 }
 
 func TestBasicAgree2B(t *testing.T) {
+	outHeader("TestBasicAgree2B")
 	servers := 3
 	cfg := make_config(t, servers, false, false)
 	defer cfg.cleanup()
@@ -165,6 +182,7 @@ func TestBasicAgree2B(t *testing.T) {
 // each command is sent to each peer just once.
 //
 func TestRPCBytes2B(t *testing.T) {
+	outHeader("TestRPCBytes2B")
 	servers := 3
 	cfg := make_config(t, servers, false, false)
 	defer cfg.cleanup()
@@ -196,6 +214,7 @@ func TestRPCBytes2B(t *testing.T) {
 }
 
 func TestFailAgree2B(t *testing.T) {
+	outHeader("TestFailAgree2B")
 	servers := 3
 	cfg := make_config(t, servers, false, false)
 	defer cfg.cleanup()
@@ -230,6 +249,7 @@ func TestFailAgree2B(t *testing.T) {
 }
 
 func TestFailNoAgree2B(t *testing.T) {
+	outHeader("TestFailNoAgree2B")
 	servers := 5
 	cfg := make_config(t, servers, false, false)
 	defer cfg.cleanup()
@@ -281,6 +301,7 @@ func TestFailNoAgree2B(t *testing.T) {
 }
 
 func TestConcurrentStarts2B(t *testing.T) {
+	outHeader("TestConcurrentStarts2B")
 	servers := 3
 	cfg := make_config(t, servers, false, false)
 	defer cfg.cleanup()
@@ -382,6 +403,7 @@ loop:
 }
 
 func TestRejoin2B(t *testing.T) {
+	outHeader("TestRejoin2B")
 	servers := 3
 	cfg := make_config(t, servers, false, false)
 	defer cfg.cleanup()
@@ -420,6 +442,7 @@ func TestRejoin2B(t *testing.T) {
 }
 
 func TestBackup2B(t *testing.T) {
+	outHeader("TestBackup2B")
 	servers := 5
 	cfg := make_config(t, servers, false, false)
 	defer cfg.cleanup()
@@ -498,6 +521,7 @@ func TestBackup2B(t *testing.T) {
 }
 
 func TestCount2B(t *testing.T) {
+	outHeader("TestCount2B")
 	servers := 3
 	cfg := make_config(t, servers, false, false)
 	defer cfg.cleanup()
@@ -608,6 +632,7 @@ loop:
 }
 
 func TestPersist12C(t *testing.T) {
+	outHeader("TestPersist12C")
 	servers := 3
 	cfg := make_config(t, servers, false, false)
 	defer cfg.cleanup()
@@ -654,6 +679,7 @@ func TestPersist12C(t *testing.T) {
 }
 
 func TestPersist22C(t *testing.T) {
+	outHeader("TestPersist22C")
 	servers := 5
 	cfg := make_config(t, servers, false, false)
 	defer cfg.cleanup()
@@ -700,6 +726,7 @@ func TestPersist22C(t *testing.T) {
 }
 
 func TestPersist32C(t *testing.T) {
+	outHeader("TestPersist32C")
 	servers := 3
 	cfg := make_config(t, servers, false, false)
 	defer cfg.cleanup()
@@ -740,6 +767,7 @@ func TestPersist32C(t *testing.T) {
 // haven't been committed yet.
 //
 func TestFigure82C(t *testing.T) {
+	outHeader("TestFigure82C")
 	servers := 5
 	cfg := make_config(t, servers, false, false)
 	defer cfg.cleanup()
@@ -796,6 +824,7 @@ func TestFigure82C(t *testing.T) {
 }
 
 func TestUnreliableAgree2C(t *testing.T) {
+	outHeader("TestUnreliableAgree2C")
 	servers := 5
 	cfg := make_config(t, servers, true, false)
 	defer cfg.cleanup()
@@ -825,6 +854,7 @@ func TestUnreliableAgree2C(t *testing.T) {
 }
 
 func TestFigure8Unreliable2C(t *testing.T) {
+	outHeader("TestFigure8Unreliable2C")
 	servers := 5
 	cfg := make_config(t, servers, true, false)
 	defer cfg.cleanup()
@@ -835,16 +865,24 @@ func TestFigure8Unreliable2C(t *testing.T) {
 
 	nup := servers
 	for iters := 0; iters < 1000; iters++ {
+		out(fmt.Sprintf("iter %d start", iters))
 		if iters == 200 {
-			cfg.setlongreordering(true)
+			cfg.setlongreordering(true) // delay some requests every 200 round?
 		}
+
+		liveServers := ""
+
 		leader := -1
 		for i := 0; i < servers; i++ {
 			_, _, ok := cfg.rafts[i].Start(rand.Int() % 10000)
 			if ok && cfg.connected[i] {
 				leader = i
 			}
+			if cfg.connected[i] {
+				liveServers += fmt.Sprintf("%d (Term %d),", i, cfg.rafts[i].GetCurrentTerm())
+			}
 		}
+		out(fmt.Sprintf("iter %d: leader %d. live servers: [%s]", iters, leader, liveServers))
 
 		if (rand.Int() % 1000) < 100 {
 			ms := rand.Int63() % (int64(RaftElectionTimeout/time.Millisecond) / 2)
@@ -857,6 +895,7 @@ func TestFigure8Unreliable2C(t *testing.T) {
 		if leader != -1 && (rand.Int()%1000) < int(RaftElectionTimeout/time.Millisecond)/2 {
 			cfg.disconnect(leader)
 			nup -= 1
+			out(fmt.Sprintf("iter %d: leader %d disconnect", iters, leader))
 		}
 
 		if nup < 3 {
@@ -864,8 +903,11 @@ func TestFigure8Unreliable2C(t *testing.T) {
 			if cfg.connected[s] == false {
 				cfg.connect(s)
 				nup += 1
+				out(fmt.Sprintf("iter %d: inst %d reconnect", iters, s))
 			}
 		}
+
+		out(fmt.Sprintf("iter %d done", iters))
 	}
 
 	for i := 0; i < servers; i++ {
@@ -873,7 +915,7 @@ func TestFigure8Unreliable2C(t *testing.T) {
 			cfg.connect(i)
 		}
 	}
-
+	out(fmt.Sprintf("last agreement to be done"))
 	cfg.one(rand.Int()%10000, servers, true)
 
 	cfg.end()
@@ -1025,10 +1067,12 @@ func internalChurn(t *testing.T, unreliable bool) {
 }
 
 func TestReliableChurn2C(t *testing.T) {
+	outHeader("TestReliableChurn2C")
 	internalChurn(t, false)
 }
 
 func TestUnreliableChurn2C(t *testing.T) {
+	outHeader("TestUnreliableChurn2C")
 	internalChurn(t, true)
 }
 
@@ -1092,22 +1136,27 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 }
 
 func TestSnapshotBasic2D(t *testing.T) {
+	outHeader("TestSnapshotBasic2D")
 	snapcommon(t, "Test (2D): snapshots basic", false, true, false)
 }
 
 func TestSnapshotInstall2D(t *testing.T) {
+	outHeader("TestSnapshotInstall2D")
 	snapcommon(t, "Test (2D): install snapshots (disconnect)", true, true, false)
 }
 
 func TestSnapshotInstallUnreliable2D(t *testing.T) {
+	outHeader("TestSnapshotInstallUnreliable2D")
 	snapcommon(t, "Test (2D): install snapshots (disconnect+unreliable)",
 		true, false, false)
 }
 
 func TestSnapshotInstallCrash2D(t *testing.T) {
+	outHeader("TestSnapshotInstallCrash2D")
 	snapcommon(t, "Test (2D): install snapshots (crash)", false, true, true)
 }
 
 func TestSnapshotInstallUnCrash2D(t *testing.T) {
+	outHeader("TestSnapshotInstallUnCrash2D")
 	snapcommon(t, "Test (2D): install snapshots (unreliable+crash)", false, false, true)
 }

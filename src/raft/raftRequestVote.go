@@ -82,6 +82,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if (rf.votedFor == -1 || rf.votedFor == args.CandidateId) && candidateLogUpToDate {
 		reply.VoteGranted = true
 		rf.votedFor = args.CandidateId
+		log.Printf("inst %d: RV Req: vote for candidate %d at term %d", rf.me, rf.votedFor, rf.currentTerm)
 		// Reset election timeout when "granting vote to candidate",
 		// otherwise the follower will never become a candidate.
 		rf.electionTimeoutAt = getNextElectionTimeout()
@@ -219,10 +220,6 @@ func (rf *Raft) electionTimeoutTicker() {
 				rf.mu.Lock()
 				defer rf.mu.Unlock()
 
-				if rf.state != STATE_CANDIDATE { // only candidate needs to handle RequestVote RPC reply
-					return
-				}
-
 				if reply.Term > rf.currentTerm {
 					log.Printf("inst %d: RV Resp: candidate becomes follower because higher term: %d -> %d",
 						rf.me, rf.currentTerm, reply.Term)
@@ -231,6 +228,10 @@ func (rf *Raft) electionTimeoutTicker() {
 					rf.electionTimeoutAt = getNextElectionTimeout()
 					rf.state = STATE_FOLLOWER
 					rf.persist()
+					return
+				}
+
+				if rf.state != STATE_CANDIDATE { // only candidate needs to handle RequestVote RPC reply
 					return
 				}
 
@@ -277,7 +278,8 @@ func (rf *Raft) electionTimeoutTicker() {
 				continue
 			}
 
-			log.Printf("inst %d: ticker: candidate becomes leader at term %d", rf.me, rf.currentTerm)
+			log.Printf("inst %d: ticker: candidate becomes leader at term %d. %s",
+				rf.me, rf.currentTerm, rf.getDataSummary())
 			rf.state = STATE_LEADER
 			rf.initVolatileLeaderState()
 			rf.firstLogIndexCurrentTerm = rf.SnapShot.LastIncludedIndex + 1

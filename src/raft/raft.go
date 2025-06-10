@@ -19,6 +19,7 @@ package raft
 
 import (
 	"bytes"
+	"fmt"
 	"log"
 	"time"
 
@@ -96,6 +97,24 @@ type Raft struct {
 	applyLogEntryAt          time.Time // for apply log entry cronjob
 	firstLogIndexCurrentTerm int       // see Figure 2 | Rules for servers | Leaders last rule
 	successiveLogConflict    []int     // for LOG_BT_BIN_EXP
+}
+
+func (rf *Raft) getDataSummary() string {
+	var ans = fmt.Sprintf("data summary: snapshot lastIncludedIndex %d, lastIncludedTerm %d. log len %d",
+		rf.SnapShot.LastIncludedIndex, rf.SnapShot.LastIncludedTerm, rf.log.size())
+
+	if !rf.log.isEmpty() {
+		ans += fmt.Sprintf(". log first entry index %d, term %d", rf.log.first().Index, rf.log.first().Term)
+	}
+
+	ans += fmt.Sprintf(". commitIndex %d, lastApplied: %d", rf.commitIndex, rf.lastApplied)
+	return ans
+}
+
+func (rf *Raft) GetCurrentTerm() int {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	return rf.currentTerm
 }
 
 func (rf *Raft) initVolatileLeaderState() {
@@ -260,7 +279,8 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 	rf.log.append(LogEntry{Term: term, Command: command, Index: index})
 	rf.persist()
-	log.Printf("inst %d: Start: leader appends a new log entry (index %d)", rf.me, index)
+	log.Printf("inst %d: Start: leader appends a new log entry (index %d) at term %d",
+		rf.me, index, rf.currentTerm)
 
 	// send AE RPC immediately. Create a new goroutine to send.
 	go func() {
@@ -324,7 +344,9 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.votedFor = -1
 	rf.log.Entries = make([]LogEntry, 0)
 	// log index begins at 1 and instances always need to agree on the very first log entry
-	rf.log.append(LogEntry{Term: -1, Index: 0})
+	//rf.log.append(LogEntry{Term: -1, Index: 0})
+	//rf.SnapShot.LastIncludedIndex = -3
+	//rf.SnapShot.LastIncludedTerm = -5
 
 	// volatile on all servers
 
@@ -346,11 +368,16 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.successiveLogConflict = make([]int, len(rf.peers))
 
 	// initialize from state persisted and snapshot before a crash
+	// if there is no persist data before, no field of rf will be changed
 	rf.readPersist(persister.ReadRaftState(), persister.ReadSnapshot())
+
+	rf.commitIndex = max(rf.SnapShot.LastIncludedIndex, 0)
+	rf.lastApplied = max(rf.SnapShot.LastIncludedIndex, 0)
+
 	// nextIndex is based on log[], so the init should be after reading persistent state
 	rf.initVolatileLeaderState()
-	rf.lastApplied = rf.SnapShot.LastIncludedIndex
 
+	log.Printf("inst %d: Make: read persist: %s", rf.me, rf.getDataSummary())
 	log.Printf("inst %d: start as follower", rf.me)
 
 	// start electionTimeoutTicker goroutine to start elections
