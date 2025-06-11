@@ -1,4 +1,4 @@
-name: Run lab tests
+name: "Run lab tests: all"
 
 on:
   push:

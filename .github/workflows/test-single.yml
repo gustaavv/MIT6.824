@@ -1,0 +1,52 @@
+name: "Run lab test: single"
+
+on:
+  workflow_dispatch:
+    inputs:
+      subfolder:
+        description: "The subfolder to enter before running the test"
+        required: true
+        type: choice
+        default: raft
+        options:
+          - raft
+      testcase:
+        description: "Testcase name"
+        required: true
+        type: choice
+        options:
+          - TestFigure8Unreliable2C
+          - TestBackup2B
+      round:
+        description: "# rounds to run the test"
+        required: true
+        type: choice
+        default: "10"
+        options:
+          - "1"
+          - "5"
+          - "10"
+          - "20"
+          - "50"
+          - "75"
+          - "100"
+          - "125"
+          - "150"
+          - "175"
+          - "200"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    name: Run ${{ github.event.inputs.testcase }} for ${{ github.event.inputs.round }} round
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.15
+
+      - name: Run tests
+        run: cd src/${{ github.event.inputs.subfolder }} && for i in {1..${{ github.event.inputs.round }}}; do rm -f app.log && time go test -run ${{ github.event.inputs.testcase }} -race || break; done
