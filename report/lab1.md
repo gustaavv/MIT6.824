@@ -18,3 +18,10 @@ http://nil.csail.mit.edu/6.824/2021/labs/lab-mr.html
   - From today's viewpoint (not 20 years ago), implementing MapReduce is essentially building a job scheduling platform. In addition, there are numerous similar implementations, such as Java's thread pool and Azure Pipeline. If you know these before, nothing will be too hard.
   - My backend development experience helps apply engineering practices to the lab, boosting both developing and debugging.
   - This lab does not require everything discussed in the MapReduce paper, leaving much freedom as well as reducing difficulty.
+
+
+## Updates
+
+> This section is written after this lab is done, i.e., not a part of the original report.
+
+I guess the lab page marks this lab as "moderate/hard" because of the efforts to learn Go and get familiarity with it.
