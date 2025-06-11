@@ -60,5 +60,6 @@ jobs:
               echo "Test failed in round $i. Exiting loop."
               exit 1
             fi
+            sleep 1
           done
           echo "Test succeeds"
