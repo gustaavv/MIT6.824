@@ -21,6 +21,8 @@ When the leader wants to send an AppendEntries RPC request, if `nextIndex` is no
 
 2️⃣ Fast retry when an AppendEntries RPC reply suggests that there is a conflict in log.
 
+3️⃣ Add a schedule job that do lock and unlock every 1 second just to check if there is a dead lock.
+
 ## Experiences
 
 ### Difficulty
@@ -50,6 +52,8 @@ But I think it is ok because the state machine will do snapshot quite often, and
 
 ### An annoying bug
 
+> I have been stuck in this bug for a long time, so I decide to record it.
+
 The bug: after implementing AppendEntries RPC fast retry, inconsistency happens. The way I implement fast retry is to let `sendAERequestAndHandleReply()` call itself if the request fails. However, if the reply indicates that this leader is at an older term, it should not send a new request. Otherwise, there will be a split-brain syndrome.
 
 Of course, I didn't realize it was the fast retry that caused this bug at first. I thought it was the snapshot mechanism. But 2D tests never failed, while `TestFigure8Unreliable2C` failed very often, which doesn't involve snapshot or crash, just random delay and disconnect. This is weird, as the new feature only leads to failure when this new feature is not enabled.
@@ -58,4 +62,94 @@ So, I added a lot log to try to identify that bug. In the end, I find adding a g
 
 The solution is simple: check the instance's state before sending AppendEntries request or InstallSnapshot request, both of which requires leader "privilege" to send.
 
-I have been stuck in this bug for a long time, so I decide to record it.
+I think it is the last missing code to fully pass tests before lab 2D. In previous labs, I did see some test failures, but I kind of "naturally" ignore them, thinking perhaps the system instead of my code went wrong.
+
+Before:
+```go
+func (rf *Raft) sendAERequestAndHandleReply(peerIndex int) {
+	rf.mu.Lock()
+	// copy raft state into args
+	args := new(AppendEntriesArgs)
+	args.Term = rf.currentTerm
+	rf.mu.Unlock()
+	
+	reply := new(AppendEntriesReply)
+	// send RPC request
+	ok := peer.Call("Raft.AppendEntries", args, reply)
+	
+	if !ok { // network failure
+		return
+	}
+	
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	
+	// first check leadership
+	// then handle reply
+}
+```
+
+Now: 
+
+```go
+func (rf *Raft) sendAERequestAndHandleReply(peerIndex int) {
+	rf.mu.Lock()
+	// check leadership first
+	if rf.state != STATE_LEADER {
+		rf.mu.Unlock()
+		return
+	}	
+	// copy raft state into args
+	args := new(AppendEntriesArgs)
+	args.Term = rf.currentTerm
+	rf.mu.Unlock()
+	
+	reply := new(AppendEntriesReply)
+	// send RPC request
+	ok := peer.Call("Raft.AppendEntries", args, reply)
+	
+	if !ok { // network failure
+		return
+	}
+	
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	
+	// first check leadership again
+	// then handle reply
+}
+```
+
+What if the raft instance is deposed to a follower after copying raft state into args and before sending RPC request? The whole system is still correct, because this request has an outdated term. The only drawback is the wasted network bandwidth to send this packet.
+
+How to solve this problem? We actually can't, because `peer.Call()` is a synchronous call, and we can't call this function inside a critical section. If there is an asynchronous version, say `CallAsync()`, we can do something like this:
+
+```go
+func (rf *Raft) sendAERequestAndHandleReply(peerIndex int) {
+	rf.mu.Lock()
+	// check leadership first
+	if rf.state != STATE_LEADER {
+		rf.mu.Unlock()
+		return
+	}	
+	// copy raft state into args
+	args := new(AppendEntriesArgs)
+	args.Term = rf.currentTerm
+	
+	reply := new(AppendEntriesReply)
+	// send RPC request asynchronously
+	ch := peer.CallAsync("Raft.AppendEntries", args, reply)
+	rf.mu.Unlock()
+	
+	// CallAsync() works like Go rpc package's client.Go() function
+	<-ch.Done
+	
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	
+	// first check leadership again
+	// then handle reply
+}
+```
+
+Although the `labrpc` package does not provide such function, it is ok because the resulting overhead is very little. I am just showing a theoretically best-performant code.
