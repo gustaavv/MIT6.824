@@ -33,6 +33,8 @@ const ENABLE_TEST_VERBOSE = false
 
 const ENABLE_TRACE_ID = false
 
+const ENABLE_SNAPSHOT_ID = false
+
 const ENABLE_DEBUG_FAST_FAIL = false
 
 /////////////////////////// follower parameters ///////////////////////////////

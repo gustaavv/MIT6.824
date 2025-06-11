@@ -41,9 +41,6 @@ func (rf *Raft) sendAERequestAndHandleReply(peerIndex int, conflictRetries int) 
 	leaderId := rf.me
 
 	if nextIndex := rf.nextIndex[peerIndex]; nextIndex <= rf.SnapShot.LastIncludedIndex {
-		if ENABLE_DEBUG_FAST_FAIL {
-			log.Fatalf("221")
-		}
 		// a lagging follower
 		log.Printf("inst %d: AE Req => IS Req: inst %d's nextIndex %d <= snapshot.LastIncludedIndex %d",
 			rf.me, peerIndex, nextIndex, rf.SnapShot.LastIncludedIndex)
@@ -171,7 +168,6 @@ func (rf *Raft) sendAERequestAndHandleReply(peerIndex int, conflictRetries int) 
 		rf.successiveLogConflict[peerIndex]++
 	}
 
-	// TODO: is this line necessary?
 	rf.nextIndex[peerIndex] = max(rf.nextIndex[peerIndex], 1)
 
 	// rf.firstLogIndexCurrentTerm ensures that log[N].term == currentTem
@@ -246,9 +242,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 				logHeader, args.PrevLogTerm, rf.SnapShot.LastIncludedTerm)
 		}
 	} else if args.PrevLogIndex < rf.SnapShot.LastIncludedIndex {
-		if ENABLE_DEBUG_FAST_FAIL {
-			log.Fatalf("111")
-		}
 		reply.Success = rf.SnapShot.LastIncludedTerm <= args.PrevLogTerm
 		if reply.Success {
 			i := 0
@@ -283,16 +276,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		log.Fatalf("%sarg first entry index %d <= snapShot.LastIncludedIndex %d",
 			logHeader, args.Entries[0].Index, rf.SnapShot.LastIncludedIndex)
 	}
-
-	//if rf.SnapShot.LastIncludedIndex == args.PrevLogIndex &&
-	//	rf.SnapShot.LastIncludedTerm == args.PrevLogTerm {
-	//	// reply should succeed in this case
-	//} else if entry := rf.log.get(args.PrevLogIndex); entry == nil || entry.Term != args.PrevLogTerm {
-	//	reply.Success = false
-	//	//log.Printf("inst %d: AE Req: log len: %d", rf.me, len(rf.log.Entries))
-	//}
-
-	//log.Printf("inst %d: AE Req: reply success: %v", rf.me, reply.Success)
 
 	if !reply.Success {
 		// TODO: fix this mode
@@ -392,10 +375,7 @@ func (rf *Raft) heartbeatTicker() {
 			continue
 		}
 
-		//log.Printf("inst %d: ticker: heartbeat at %v", rf.me, time.Now())
-
 		rf.sendHeartbeats()
-
 		rf.heartbeatAt = getNextHeartbeatTime()
 
 		rf.mu.Unlock()

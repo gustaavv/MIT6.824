@@ -139,6 +139,7 @@ func getNextElectionTimeout() time.Time {
 // The electionTimeoutTicker go routine starts a new election if this peer hasn't received
 // heartbeats recently.
 func (rf *Raft) electionTimeoutTicker() {
+	logHeader := fmt.Sprintf("inst %d: ticker: ", rf.me)
 	for rf.killed() == false {
 
 		// Your code here to check if a leader election should
@@ -166,7 +167,7 @@ func (rf *Raft) electionTimeoutTicker() {
 		rf.currentTerm++
 		rf.votedFor = rf.me
 		rf.persist()
-		log.Printf("inst %d: ticker: follower becomes candidate at a new term %d", rf.me, rf.currentTerm)
+		log.Printf("%sfollower becomes candidate at a new term %d", logHeader, rf.currentTerm)
 
 		timeout := time.After(getElectionTimeoutDuration() * time.Millisecond)
 
@@ -196,7 +197,6 @@ func (rf *Raft) electionTimeoutTicker() {
 			lastLogIndex = lastLogEntry.Index
 			lastLogTerm = lastLogEntry.Term
 		}
-
 		for i, peer := range rf.peers {
 			if i == rf.me {
 				continue
@@ -262,8 +262,8 @@ func (rf *Raft) electionTimeoutTicker() {
 				continue
 			}
 
-			log.Printf("inst %d: ticker: candidate election at term %d timeouts (lacking %d votes). Start a new one",
-				rf.me, term, *voteCount)
+			log.Printf("%scandidate election at term %d timeouts (lacking %d votes). Start a new one",
+				logHeader, term, *voteCount)
 
 			// Although it shouldn't be a follower as in Figure 2, but for the convenience of coding, let's do this.
 			// Since we set election timeout at now, it won't wait too much time
@@ -282,8 +282,8 @@ func (rf *Raft) electionTimeoutTicker() {
 				continue
 			}
 
-			log.Printf("inst %d: ticker: candidate becomes leader at term %d. %s",
-				rf.me, rf.currentTerm, rf.getDataSummary())
+			log.Printf("%scandidate becomes leader at term %d. %s",
+				logHeader, rf.currentTerm, rf.getDataSummary())
 			rf.state = STATE_LEADER
 			rf.initVolatileLeaderState()
 			rf.firstLogIndexCurrentTerm = rf.SnapShot.LastIncludedIndex + 1

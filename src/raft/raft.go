@@ -53,6 +53,7 @@ type ApplyMsg struct {
 	Snapshot      []byte
 	SnapshotTerm  int
 	SnapshotIndex int
+	SnapshotId    int
 }
 
 // Raft
@@ -226,6 +227,8 @@ func (rf *Raft) readPersist(stateData []byte, snapshotData []byte) {
 	//   rf.yyy = yyy
 	// }
 
+	logHeader := fmt.Sprintf("inst %d: readPersist: ", rf.me)
+
 	r := bytes.NewBuffer(stateData)
 	d := labgob.NewDecoder(r)
 
@@ -236,7 +239,7 @@ func (rf *Raft) readPersist(stateData []byte, snapshotData []byte) {
 	if d.Decode(&currentTerm) != nil ||
 		d.Decode(&votedFor) != nil ||
 		d.Decode(&raftLog) != nil {
-		log.Fatalf("inst %d: readPersist: error happens when decoding", rf.me)
+		log.Fatalf("%serror happens when decoding", logHeader)
 	} else {
 		rf.currentTerm = currentTerm
 		rf.votedFor = votedFor
@@ -247,13 +250,13 @@ func (rf *Raft) readPersist(stateData []byte, snapshotData []byte) {
 	d = labgob.NewDecoder(r)
 	var snapShot SnapShot
 	if d.Decode(&snapShot) != nil {
-		log.Printf("inst $%d: readPersist: error happens when decoding", rf.me)
+		log.Printf("%serror happens when decoding", logHeader)
 	} else {
 		rf.SnapShot = snapShot
 	}
 
-	log.Printf("inst %d: readPersist: restore (1) state: currentTerm: %d, votedFor: %d (2) snapshot: lastIncludeIndex: %d, lastIncludeTerm: %d",
-		rf.me,
+	log.Printf("%srestore (1) state: currentTerm: %d, votedFor: %d (2) snapshot: lastIncludeIndex: %d, lastIncludeTerm: %d",
+		logHeader,
 		rf.currentTerm, votedFor,
 		snapShot.LastIncludedIndex, snapShot.LastIncludedTerm,
 	)
@@ -327,10 +330,11 @@ func (rf *Raft) killed() bool {
 }
 
 func (rf *Raft) checkStatusTicker() {
+	logHeader := fmt.Sprintf("inst %d: ticker3: ", rf.me)
 	for rf.killed() == false {
 		time.Sleep(time.Second)
 		rf.mu.Lock()
-		log.Printf("inst %d: ticker3: no dead lock", rf.me)
+		log.Printf("%sno dead lock", logHeader)
 		rf.mu.Unlock()
 	}
 }

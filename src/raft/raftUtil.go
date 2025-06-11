@@ -16,6 +16,8 @@ func max(a, b int) int {
 	return b
 }
 
+////////////////////////////////////////////////////////
+
 var nextTraceId = 0
 var traceIdLock sync.Mutex
 
@@ -27,4 +29,19 @@ func getNextTraceId() int {
 	defer traceIdLock.Unlock()
 	nextTraceId++
 	return nextTraceId
+}
+
+////////////////////////////////////////////////////////
+
+var nextSnapshotId = 0
+var snapshotIdLock sync.Mutex
+
+func getNextSnapshotId() int {
+	if !ENABLE_SNAPSHOT_ID {
+		return 0
+	}
+	snapshotIdLock.Lock()
+	defer snapshotIdLock.Unlock()
+	nextSnapshotId++
+	return nextSnapshotId
 }

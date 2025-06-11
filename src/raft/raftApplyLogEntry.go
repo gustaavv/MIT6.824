@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"fmt"
 	"log"
 	"time"
 )
@@ -10,6 +11,7 @@ func getNextApplyLogEntryTime() time.Time {
 }
 
 func (rf *Raft) applyLogEntryTicker() {
+	logHeader := fmt.Sprintf("inst %d: ticker2: ", rf.me)
 	for rf.killed() == false {
 		time.Sleep(TICKER_FREQUENCY)
 
@@ -26,8 +28,8 @@ func (rf *Raft) applyLogEntryTicker() {
 			rf.lastApplied++
 
 			if entry := rf.log.get(rf.lastApplied); entry == nil {
-				log.Panicf("inst %d: ticker2: lastApplied: %d, log index range: [%d, %d]",
-					rf.me, rf.lastApplied, rf.log.first().Index, rf.log.last().Index)
+				log.Fatalf("%slastApplied: %d, log index range: [%d, %d]",
+					logHeader, rf.lastApplied, rf.log.first().Index, rf.log.last().Index)
 			}
 
 			applyMsg = &ApplyMsg{
@@ -46,7 +48,7 @@ func (rf *Raft) applyLogEntryTicker() {
 		// critical section to prevent holding the lock for too long
 		if applyMsg != nil {
 			rf.applyCh <- *applyMsg
-			log.Printf("inst %d: ticker2: %s applied log index: %v", rf.me, instState, applyMsg.CommandIndex)
+			log.Printf("%s%s applied log index: %v", logHeader, instState, applyMsg.CommandIndex)
 		}
 	}
 }

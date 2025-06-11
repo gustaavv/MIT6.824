@@ -9,6 +9,7 @@ type SnapShot struct {
 	Data              []byte
 	LastIncludedIndex int
 	LastIncludedTerm  int
+	Id                int
 }
 
 // Snapshot
@@ -23,31 +24,38 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	defer rf.mu.Unlock()
 	defer rf.persist()
 
+	logHeader := fmt.Sprintf("inst %d: snapshot: ", rf.me)
+
 	if !rf.log.checkValidIndex(index) {
-		log.Printf("inst %d: snapshot: index out of range: %d not in [%d, %d]",
-			rf.me, index, rf.log.first().Index, rf.log.last().Index)
+		log.Printf("%sindex out of range: %d not in [%d, %d]",
+			logHeader, index, rf.log.first().Index, rf.log.last().Index)
 		return
 	}
 	if rf.SnapShot.LastIncludedIndex >= index {
-		log.Printf("inst %d: snapshot: old snapshot index %d >= new snapshot index %d",
-			rf.me, rf.SnapShot.LastIncludedIndex, index)
+		log.Printf("%sold snapshot index %d >= new snapshot index %d",
+			logHeader, rf.SnapShot.LastIncludedIndex, index)
 		return
 	}
 	if rf.lastApplied < index {
-		log.Printf("inst %d: snapshot: lastApplied %d < new snapshot index %d",
-			rf.me, rf.lastApplied, index)
+		log.Printf("%slastApplied %d < new snapshot index %d",
+			logHeader, rf.lastApplied, index)
 		return
 	}
 
-	newSnapshot := SnapShot{Data: snapshot, LastIncludedIndex: index, LastIncludedTerm: rf.log.get(index).Term}
+	newSnapshot := SnapShot{
+		Data:              snapshot,
+		LastIncludedIndex: index,
+		LastIncludedTerm:  rf.log.get(index).Term,
+		Id:                getNextSnapshotId(),
+	}
 	newLogEntries := rf.log.getRangeStartFrom(index + 1)
 	// make a new slice so that the original one can be GCed
 	newLogEntriesCopy := make([]LogEntry, len(newLogEntries))
 	copy(newLogEntriesCopy, newLogEntries)
 	rf.log.Entries = newLogEntriesCopy
 	rf.SnapShot = newSnapshot
-	log.Printf("inst %d: snapshot: new snapshot created: LastIndex: %d, LastTerm: %d",
-		rf.me, index, newSnapshot.LastIncludedTerm)
+	log.Printf("%snew snapshot created: LastIndex: %d, LastTerm: %d, Id: %d",
+		logHeader, index, newSnapshot.LastIncludedTerm, newSnapshot.Id)
 }
 
 type InstallSnapshotArgs struct {
@@ -57,11 +65,13 @@ type InstallSnapshotArgs struct {
 	LastIncludedIndex int
 	LastIncludedTerm  int
 	Data              []byte
+	SnapshotId        int
 }
 
 type InstallSnapshotReply struct {
-	TraceId int
-	Term    int
+	TraceId    int
+	Term       int
+	SnapshotId int
 }
 
 func (rf *Raft) sendISRequestAndHandleReply(peerIndex int) {
@@ -79,6 +89,7 @@ func (rf *Raft) sendISRequestAndHandleReply(peerIndex int) {
 	lastIncludedTerm := rf.SnapShot.LastIncludedTerm
 	data := make([]byte, len(rf.SnapShot.Data))
 	copy(data, rf.SnapShot.Data)
+	snapshotId := rf.SnapShot.Id
 	rf.mu.Unlock()
 
 	args := new(InstallSnapshotArgs)
@@ -88,6 +99,7 @@ func (rf *Raft) sendISRequestAndHandleReply(peerIndex int) {
 	args.LastIncludedIndex = lastIncludedIndex
 	args.LastIncludedTerm = lastIncludedTerm
 	args.Data = data
+	args.SnapshotId = snapshotId
 
 	reply := new(InstallSnapshotReply)
 	ok := peer.Call("Raft.InstallSnapshot", args, reply)
@@ -99,10 +111,6 @@ func (rf *Raft) sendISRequestAndHandleReply(peerIndex int) {
 	// verify reply
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-
-	if rf.state != STATE_LEADER { // only leader needs to handle InstallSnapshot RPC reply
-		return
-	}
 
 	logHeader := fmt.Sprintf("inst %d: IS Resp: Trace: %d: ", rf.me, reply.TraceId)
 
@@ -117,6 +125,11 @@ func (rf *Raft) sendISRequestAndHandleReply(peerIndex int) {
 		return
 	}
 
+	if rf.state != STATE_LEADER { // only leader needs to handle InstallSnapshot RPC reply
+		return
+	}
+
+	// do not forget to update nextIndex, otherwise there will always be AE Req => IS Req
 	rf.nextIndex[peerIndex] = max(lastIncludedIndex+1, rf.nextIndex[peerIndex])
 	rf.successiveLogConflict[peerIndex] = SUCCESSIVE_CONFLICT_OFFSET
 	log.Printf("%sinst %d's new nextIndex: %d", logHeader, peerIndex, rf.nextIndex[peerIndex])
@@ -124,6 +137,7 @@ func (rf *Raft) sendISRequestAndHandleReply(peerIndex int) {
 
 func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
 	reply.TraceId = args.TraceId
+	reply.SnapshotId = args.SnapshotId
 	rf.mu.Lock()
 
 	logHeader := fmt.Sprintf("inst %d: IS Req: Trace: %d: ", rf.me, args.TraceId)
@@ -149,8 +163,8 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 
 	// #2 - #5 passed
 	// #6 - #8 is in CondInstallSnapshot
-	log.Printf("%sreceive snapshot from inst %d, lastLogIndex: %d, lastLogTerm: %d. lastApplied: %d, commitIndex: %d",
-		logHeader, args.LeaderId, args.LastIncludedIndex, args.LastIncludedTerm, rf.lastApplied, rf.commitIndex)
+	log.Printf("%sreceive snapshot from inst %d, lastLogIndex: %d, lastLogTerm: %d, Id: %d. lastApplied: %d, commitIndex: %d",
+		logHeader, args.LeaderId, args.LastIncludedIndex, args.LastIncludedTerm, args.SnapshotId, rf.lastApplied, rf.commitIndex)
 	rf.mu.Unlock()
 
 	// sending to channel should not be in critical sections
@@ -160,6 +174,7 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		Snapshot:      args.Data,
 		SnapshotIndex: args.LastIncludedIndex,
 		SnapshotTerm:  args.LastIncludedTerm,
+		SnapshotId:    args.SnapshotId,
 	}
 }
 
@@ -167,21 +182,23 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 // A service wants to switch to snapshot.  Only do so if Raft hasn't
 // have more recent info since it communicate the snapshot on applyCh.
 //
-func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int, snapshot []byte) bool {
+func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int, snapshotId int, snapshot []byte) bool {
 	// Your code here (2D).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
+	logHeader := fmt.Sprintf("inst %d: CondIS: snapshotId: %d: ", rf.me, snapshotId)
+
 	// #6 there exists a log entry matching lastIncludedTerm and lastIncludedIndex
 	if lastEntry := rf.log.get(lastIncludedIndex); lastEntry != nil && lastEntry.Term == lastIncludedTerm {
 		if rf.lastApplied <= lastIncludedIndex {
-			log.Printf("inst %d: CondIS: keep state: lastApplied %d <= lastIncludedIndex %d",
-				rf.me, rf.lastApplied, lastIncludedIndex)
+			log.Printf("%skeep state: lastApplied %d <= lastIncludedIndex %d",
+				logHeader, rf.lastApplied, lastIncludedIndex)
 			// do nothing, since lastApplied will eventually catch up lastIncludedIndex
 			return false
 		} else if rf.SnapShot.LastIncludedIndex < lastIncludedIndex { // only keep the latest snapshot
-			log.Printf("inst %d: CondIS: keep state: old lastIncludedIndex %d <= new lastIncludedIndex %d",
-				rf.me, rf.SnapShot.LastIncludedIndex, lastIncludedIndex)
+			log.Printf("%skeep state: old lastIncludedIndex %d <= new lastIncludedIndex %d",
+				logHeader, rf.SnapShot.LastIncludedIndex, lastIncludedIndex)
 			// trim logs entries before LastIncludedIndex(including)
 			// i.e., retain log entries after LastIncludedIndex
 			newLogEntries := rf.log.getRangeStartFrom(lastIncludedIndex + 1)
@@ -198,8 +215,8 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 		}
 
 	} else if rf.lastApplied < lastIncludedIndex {
-		log.Printf("inst %d: CondIS: Reset state: lastApplied %d <= lastIncludedIndex %d",
-			rf.me, rf.lastApplied, lastIncludedIndex)
+		log.Printf("%sReset state: lastApplied %d <= lastIncludedIndex %d",
+			logHeader, rf.lastApplied, lastIncludedIndex)
 
 		// #7 discard the entire log
 		rf.log.Entries = make([]LogEntry, 0)
@@ -217,8 +234,8 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 		return true
 	}
 
-	log.Printf("inst %d: CondIS: old useless snapshot: lastIncludedTerm: %d, lastIncludedIndex: %d, lastApplied: %d",
-		rf.me, lastIncludedTerm, lastIncludedIndex, rf.lastApplied)
+	log.Printf("%sold useless snapshot: lastIncludedTerm: %d, lastIncludedIndex: %d, lastApplied: %d",
+		logHeader, lastIncludedTerm, lastIncludedIndex, rf.lastApplied)
 
 	return false
 }
