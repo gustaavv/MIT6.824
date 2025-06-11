@@ -368,10 +368,12 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.currentTerm = 0
 	rf.votedFor = -1
 	rf.log.Entries = make([]LogEntry, 0)
+	// before lab 2D:
 	// log index begins at 1 and instances always need to agree on the very first log entry
-	//rf.log.append(LogEntry{Term: -1, Index: 0})
-	//rf.SnapShot.LastIncludedIndex = -3
-	//rf.SnapShot.LastIncludedTerm = -5
+	// rf.log.append(LogEntry{Term: -1, Index: 0})
+	// after lab 2D:
+	// by default, rf.SnapShot.LastIncludedIndex and rf.SnapShot.LastIncludedTerm equal to 0
+	// which can be used as the first log entry for instances to agree on
 
 	// volatile on all servers
 
@@ -405,7 +407,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	log.Printf("inst %d: Make: read persist: %s", rf.me, rf.getDataSummary())
 	log.Printf("inst %d: start as follower", rf.me)
 
-	// start electionTimeoutTicker goroutine to start elections
 	go rf.electionTimeoutTicker()
 	go rf.heartbeatTicker()
 	go rf.applyLogEntryTicker()
