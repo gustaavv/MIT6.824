@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"fmt"
 	"log"
 	"math/rand"
 	"sync"
@@ -40,6 +41,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 
 	reply.TraceId = args.TraceId
+	logHeader := fmt.Sprintf("inst %d: RV Req: Trace: %d: ", rf.me, args.TraceId)
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	defer rf.persist()
@@ -54,8 +56,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	reply.Term = args.Term
 
 	if args.Term > rf.currentTerm {
-		log.Printf("inst %d: RV Req: %v becomes follower because candidate (inst %d) with higher term: %d -> %d",
-			rf.me, rf.state, args.CandidateId, rf.currentTerm, args.Term)
+		log.Printf("%s%v becomes follower because candidate (inst %d) with higher term: %d -> %d",
+			logHeader, rf.state, args.CandidateId, rf.currentTerm, args.Term)
 		rf.currentTerm = args.Term
 		rf.votedFor = -1
 		rf.electionTimeoutAt = getNextElectionTimeout()
@@ -82,7 +84,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if (rf.votedFor == -1 || rf.votedFor == args.CandidateId) && candidateLogUpToDate {
 		reply.VoteGranted = true
 		rf.votedFor = args.CandidateId
-		log.Printf("inst %d: RV Req: vote for candidate %d at term %d", rf.me, rf.votedFor, rf.currentTerm)
+		log.Printf("%svote for candidate %d at term %d", logHeader, rf.votedFor, rf.currentTerm)
 		// Reset election timeout when "granting vote to candidate",
 		// otherwise the follower will never become a candidate.
 		rf.electionTimeoutAt = getNextElectionTimeout()
@@ -220,9 +222,11 @@ func (rf *Raft) electionTimeoutTicker() {
 				rf.mu.Lock()
 				defer rf.mu.Unlock()
 
+				logHeader := fmt.Sprintf("inst %d: RV Resp: Trace: %d: ", rf.me, reply.TraceId)
+
 				if reply.Term > rf.currentTerm {
-					log.Printf("inst %d: RV Resp: candidate becomes follower because higher term: %d -> %d",
-						rf.me, rf.currentTerm, reply.Term)
+					log.Printf("%scandidate becomes follower because higher term: %d -> %d",
+						logHeader, rf.currentTerm, reply.Term)
 					rf.currentTerm = reply.Term
 					rf.votedFor = -1
 					rf.electionTimeoutAt = getNextElectionTimeout()

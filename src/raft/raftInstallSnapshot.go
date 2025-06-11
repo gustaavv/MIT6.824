@@ -1,6 +1,9 @@
 package raft
 
-import "log"
+import (
+	"fmt"
+	"log"
+)
 
 type SnapShot struct {
 	Data              []byte
@@ -65,6 +68,11 @@ func (rf *Raft) sendISRequestAndHandleReply(peerIndex int) {
 	peer := rf.peers[peerIndex]
 
 	rf.mu.Lock()
+	if rf.state != STATE_LEADER {
+		rf.mu.Unlock()
+		return
+	}
+	traceId := getNextTraceId()
 	term := rf.currentTerm
 	leaderId := rf.me
 	lastIncludedIndex := rf.SnapShot.LastIncludedIndex
@@ -74,7 +82,7 @@ func (rf *Raft) sendISRequestAndHandleReply(peerIndex int) {
 	rf.mu.Unlock()
 
 	args := new(InstallSnapshotArgs)
-	args.TraceId = getNextTraceId()
+	args.TraceId = traceId
 	args.Term = term
 	args.LeaderId = leaderId
 	args.LastIncludedIndex = lastIncludedIndex
@@ -96,9 +104,11 @@ func (rf *Raft) sendISRequestAndHandleReply(peerIndex int) {
 		return
 	}
 
+	logHeader := fmt.Sprintf("inst %d: IS Resp: Trace: %d: ", rf.me, reply.TraceId)
+
 	if reply.Term > rf.currentTerm {
-		log.Printf("inst %d: IS Resp: leader becomes follower because new leader %d with higher term: %d -> %d",
-			rf.me, peerIndex, rf.currentTerm, reply.Term)
+		log.Printf("%sleader becomes follower because new leader %d with higher term: %d -> %d",
+			logHeader, peerIndex, rf.currentTerm, reply.Term)
 		rf.currentTerm = reply.Term
 		rf.votedFor = -1
 		rf.electionTimeoutAt = getNextElectionTimeout()
@@ -109,12 +119,14 @@ func (rf *Raft) sendISRequestAndHandleReply(peerIndex int) {
 
 	rf.nextIndex[peerIndex] = max(lastIncludedIndex+1, rf.nextIndex[peerIndex])
 	rf.successiveLogConflict[peerIndex] = SUCCESSIVE_CONFLICT_OFFSET
-	log.Printf("inst %d: IS Resp: inst %d's new nextIndex: %d", rf.me, peerIndex, rf.nextIndex[peerIndex])
+	log.Printf("%sinst %d's new nextIndex: %d", logHeader, peerIndex, rf.nextIndex[peerIndex])
 }
 
 func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
 	reply.TraceId = args.TraceId
 	rf.mu.Lock()
+
+	logHeader := fmt.Sprintf("inst %d: IS Req: Trace: %d: ", rf.me, args.TraceId)
 
 	// #1
 	if args.Term < rf.currentTerm { // outdated leader
@@ -127,8 +139,8 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	reply.Term = args.Term
 
 	if args.Term > rf.currentTerm {
-		log.Printf("inst %d: AE Req: %v becomes follower because leader (inst %d) with higher term: %d -> %d",
-			rf.me, rf.state, args.LeaderId, rf.currentTerm, args.Term)
+		log.Printf("%s%v becomes follower because leader (inst %d) with higher term: %d -> %d",
+			logHeader, rf.state, args.LeaderId, rf.currentTerm, args.Term)
 		rf.currentTerm = args.Term
 		rf.votedFor = -1
 		rf.state = STATE_FOLLOWER
@@ -137,8 +149,8 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 
 	// #2 - #5 passed
 	// #6 - #8 is in CondInstallSnapshot
-	log.Printf("inst %d: IS Req: receive snapshot from inst %d, lastLogIndex: %d, lastLogTerm: %d. lastApplied: %d, commitIndex: %d",
-		rf.me, args.LeaderId, args.LastIncludedIndex, args.LastIncludedTerm, rf.lastApplied, rf.commitIndex)
+	log.Printf("%sreceive snapshot from inst %d, lastLogIndex: %d, lastLogTerm: %d. lastApplied: %d, commitIndex: %d",
+		logHeader, args.LeaderId, args.LastIncludedIndex, args.LastIncludedTerm, rf.lastApplied, rf.commitIndex)
 	rf.mu.Unlock()
 
 	// sending to channel should not be in critical sections

@@ -879,8 +879,10 @@ func TestFigure8Unreliable2C(t *testing.T) {
 				leader = i
 			}
 			if cfg.connected[i] {
-				liveServers += fmt.Sprintf("%d (Term %d),", i, cfg.rafts[i].GetCurrentTerm())
+				//liveServers += fmt.Sprintf("%d (Term %d),", i, cfg.rafts[i].GetCurrentTerm())
 			}
+			//out(fmt.Sprintf("iter %d: inst %d: %s. log data: %v",
+			//	iters, i, cfg.rafts[i].GetDataSummary2(), cfg.rafts[i].GetLogData()))
 		}
 		out(fmt.Sprintf("iter %d: leader %d. live servers: [%s]", iters, leader, liveServers))
 

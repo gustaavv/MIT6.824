@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"fmt"
 	"log"
 	"time"
 )
@@ -31,10 +32,18 @@ func (rf *Raft) sendAERequestAndHandleReply(peerIndex int, conflictRetries int) 
 
 	// copy rf's state before putting into args
 	rf.mu.Lock()
+	if rf.state != STATE_LEADER {
+		rf.mu.Unlock()
+		return
+	}
+	traceId := getNextTraceId()
 	currentTerm := rf.currentTerm
 	leaderId := rf.me
 
 	if nextIndex := rf.nextIndex[peerIndex]; nextIndex <= rf.SnapShot.LastIncludedIndex {
+		if ENABLE_DEBUG_FAST_FAIL {
+			log.Fatalf("221")
+		}
 		// a lagging follower
 		log.Printf("inst %d: AE Req => IS Req: inst %d's nextIndex %d <= snapshot.LastIncludedIndex %d",
 			rf.me, peerIndex, nextIndex, rf.SnapShot.LastIncludedIndex)
@@ -43,10 +52,12 @@ func (rf *Raft) sendAERequestAndHandleReply(peerIndex int, conflictRetries int) 
 		return
 	}
 
+	firstIndex, nextIndex := -1, -1
 	if !rf.log.isEmpty() {
-		log.Printf("inst %d: AE Req: inst %d's nextIndex: %d. log first entry index: %d, log next index: %d",
-			rf.me, peerIndex, rf.nextIndex[peerIndex], rf.log.first().Index, rf.log.nextIndex())
+		firstIndex, nextIndex = rf.log.first().Index, rf.log.nextIndex()
 	}
+	log.Printf("inst %d: AE Req: Trace: %d: inst %d's nextIndex: %d. log first entry index: %d, log next index: %d",
+		rf.me, traceId, peerIndex, rf.nextIndex[peerIndex], firstIndex, nextIndex)
 
 	prevLogIndex := rf.SnapShot.LastIncludedIndex
 	prevLogTerm := rf.SnapShot.LastIncludedTerm
@@ -66,7 +77,7 @@ func (rf *Raft) sendAERequestAndHandleReply(peerIndex int, conflictRetries int) 
 	rf.mu.Unlock()
 
 	args := new(AppendEntriesArgs)
-	args.TraceId = getNextTraceId()
+	args.TraceId = traceId
 	args.Term = currentTerm
 	args.LeaderId = leaderId
 	args.PrevLogIndex = prevLogIndex
@@ -84,11 +95,14 @@ func (rf *Raft) sendAERequestAndHandleReply(peerIndex int, conflictRetries int) 
 	// verify reply
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	//log.Printf("inst %d: AE Resp: inst %d reply success: %v", rf.me, peerIndex, reply.Success)
+
+	logHeader := fmt.Sprintf("inst %d: AE Resp: Trace: %d: ", rf.me, reply.TraceId)
+
+	log.Printf("%sinst %d reply success: %v", logHeader, peerIndex, reply.Success)
 
 	if reply.Term > rf.currentTerm {
-		log.Printf("inst %d: AE Resp: leader becomes follower because new leader %d with higher term: %d -> %d",
-			rf.me, peerIndex, rf.currentTerm, reply.Term)
+		log.Printf("%s%s becomes follower because inst %d with higher term: %d -> %d",
+			logHeader, rf.state, peerIndex, rf.currentTerm, reply.Term)
 		rf.currentTerm = reply.Term
 		rf.votedFor = -1
 		rf.electionTimeoutAt = getNextElectionTimeout()
@@ -108,8 +122,8 @@ func (rf *Raft) sendAERequestAndHandleReply(peerIndex int, conflictRetries int) 
 		// we need to guard against old reply in the same term, which acknowledged old (smaller) matchIndex
 		// because matchIndex should not go back
 		if prevLogIndex+len(entries) > rf.matchIndex[peerIndex] {
-			log.Printf("inst %d: AE Resp: leader updates matchIndex[%d]: %d -> %d",
-				rf.me, peerIndex, rf.matchIndex[peerIndex], prevLogIndex+len(entries))
+			log.Printf("%sleader updates matchIndex[%d]: %d -> %d",
+				logHeader, peerIndex, rf.matchIndex[peerIndex], prevLogIndex+len(entries))
 			rf.matchIndex[peerIndex] = prevLogIndex + len(entries)
 			if LOG_BACKTRACKING_MODE != LOG_BT_AGGRESSIVE {
 				rf.nextIndex[peerIndex] = rf.matchIndex[peerIndex] + 1
@@ -158,7 +172,7 @@ func (rf *Raft) sendAERequestAndHandleReply(peerIndex int, conflictRetries int) 
 	}
 
 	// TODO: is this line necessary?
-	//rf.nextIndex[peerIndex] = max(rf.nextIndex[peerIndex], 1)
+	rf.nextIndex[peerIndex] = max(rf.nextIndex[peerIndex], 1)
 
 	// rf.firstLogIndexCurrentTerm ensures that log[N].term == currentTem
 	// try to find an N s.t. N > commitIndex, so just let N = commitIndex + 1 first, then N++
@@ -176,11 +190,11 @@ func (rf *Raft) sendAERequestAndHandleReply(peerIndex int, conflictRetries int) 
 		if majorityCount <= 0 {
 			rf.commitIndex = N
 			if rf.log.get(N).Term != currentTerm { // double check whether my implementation is correct
-				log.Fatalf("inst %d: AE Resp: Error: the newly committed log's term is %d, but current term is %d. commitIndex: %d",
-					rf.me, rf.log.get(N).Term, currentTerm, rf.commitIndex)
+				log.Fatalf("%sError: the newly committed log's term is %d, but current term is %d. commitIndex: %d",
+					logHeader, rf.log.get(N).Term, currentTerm, rf.commitIndex)
 			}
-			log.Printf("inst %d: AE Resp: leader commits new logs (commitIndex: %d) at term %d",
-				rf.me, rf.commitIndex, rf.currentTerm)
+			log.Printf("%sleader commits new logs (commitIndex: %d) at term %d",
+				logHeader, rf.commitIndex, rf.currentTerm)
 		} else {
 			break
 		}
@@ -195,10 +209,10 @@ func (rf *Raft) sendAERequestAndHandleReply(peerIndex int, conflictRetries int) 
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	reply.TraceId = args.TraceId
-	reply.Success = true
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	defer rf.persist()
+	logHeader := fmt.Sprintf("inst %d: AE Req: Trace: %d: ", rf.me, args.TraceId)
 
 	// #1
 	if args.Term < rf.currentTerm { // outdated leader
@@ -213,26 +227,72 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	reply.Term = args.Term
 
 	if args.Term > rf.currentTerm {
-		log.Printf("inst %d: AE Req: %v becomes follower because leader (inst %d) with higher term: %d -> %d",
-			rf.me, rf.state, args.LeaderId, rf.currentTerm, args.Term)
+		log.Printf("%s%v becomes follower because leader (inst %d) with higher term: %d -> %d",
+			logHeader, rf.state, args.LeaderId, rf.currentTerm, args.Term)
 		rf.currentTerm = args.Term
 		rf.votedFor = -1
 		rf.state = STATE_FOLLOWER
 	}
 
-	log.Printf("inst %d: AE Req: arg PrevLogIndex: %d, PrevLogTerm: %d, log len %d",
-		rf.me, args.PrevLogIndex, args.PrevLogTerm, len(args.Entries))
+	//log.Printf("inst %d: AE Req: arg PrevLogIndex: %d, PrevLogTerm: %d, log len %d",
+	//	rf.me, args.PrevLogIndex, args.PrevLogTerm, len(args.Entries))
 
 	// #2
-	if rf.SnapShot.LastIncludedIndex == args.PrevLogIndex &&
-		rf.SnapShot.LastIncludedTerm == args.PrevLogTerm {
-		// reply should succeed in this case
-	} else if entry := rf.log.get(args.PrevLogIndex); entry == nil || entry.Term != args.PrevLogTerm {
-		reply.Success = false
-		//log.Printf("inst %d: AE Req: log len: %d", rf.me, len(rf.log.Entries))
+
+	if args.PrevLogIndex == rf.SnapShot.LastIncludedIndex {
+		reply.Success = args.PrevLogTerm == rf.SnapShot.LastIncludedTerm
+		if !reply.Success {
+			log.Fatalf("%sargs.PrevLogTerm %d != snapShot.LastIncludedTerm %d",
+				logHeader, args.PrevLogTerm, rf.SnapShot.LastIncludedTerm)
+		}
+	} else if args.PrevLogIndex < rf.SnapShot.LastIncludedIndex {
+		if ENABLE_DEBUG_FAST_FAIL {
+			log.Fatalf("111")
+		}
+		reply.Success = rf.SnapShot.LastIncludedTerm <= args.PrevLogTerm
+		if reply.Success {
+			i := 0
+			for i < len(args.Entries) && args.Entries[i].Index <= rf.SnapShot.LastIncludedIndex {
+				i++
+			}
+
+			oldFirstIndex := -1
+			if len(args.Entries) > 0 {
+				oldFirstIndex = args.Entries[0].Index
+			}
+			newFirstIndex := -1
+			if i < len(args.Entries) {
+				newFirstIndex = args.Entries[i].Index
+			}
+			log.Printf("%strim(start) arg entries: len %d -> %d, first log index %d -> %d",
+				logHeader, len(args.Entries), len(args.Entries)-i, oldFirstIndex, newFirstIndex)
+
+			args.Entries = args.Entries[i:]
+			args.PrevLogIndex = rf.SnapShot.LastIncludedIndex
+			args.PrevLogTerm = rf.SnapShot.LastIncludedTerm
+		} else {
+			log.Printf("%sarg.prevLogIndex %d, arg.prevLogTerm %d, snapShot.LastIncludedIndex %d, snapShot.LastIncludedTerm %d",
+				logHeader, args.PrevLogIndex, args.PrevLogTerm, rf.SnapShot.LastIncludedIndex, rf.SnapShot.LastIncludedTerm)
+		}
+	} else {
+		entry := rf.log.get(args.PrevLogIndex)
+		reply.Success = !(entry == nil || entry.Term != args.PrevLogTerm)
 	}
 
-	log.Printf("inst %d: AE Req: reply success: %v", rf.me, reply.Success)
+	if len(args.Entries) > 0 && args.Entries[0].Index <= rf.SnapShot.LastIncludedIndex {
+		log.Fatalf("%sarg first entry index %d <= snapShot.LastIncludedIndex %d",
+			logHeader, args.Entries[0].Index, rf.SnapShot.LastIncludedIndex)
+	}
+
+	//if rf.SnapShot.LastIncludedIndex == args.PrevLogIndex &&
+	//	rf.SnapShot.LastIncludedTerm == args.PrevLogTerm {
+	//	// reply should succeed in this case
+	//} else if entry := rf.log.get(args.PrevLogIndex); entry == nil || entry.Term != args.PrevLogTerm {
+	//	reply.Success = false
+	//	//log.Printf("inst %d: AE Req: log len: %d", rf.me, len(rf.log.Entries))
+	//}
+
+	//log.Printf("inst %d: AE Req: reply success: %v", rf.me, reply.Success)
 
 	if !reply.Success {
 		// TODO: fix this mode
@@ -258,8 +318,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 					}
 				}
 			}
-			log.Printf("inst %d: AE Req: conflictIndex: %d, conflictTerm: %d",
-				rf.me, reply.ConflictIndex, reply.ConflictTerm)
+			log.Printf("%sconflictIndex: %d, conflictTerm: %d",
+				logHeader, reply.ConflictIndex, reply.ConflictTerm)
 		}
 
 		return
@@ -271,10 +331,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	for !rf.log.isEmpty() && i < rf.log.nextIndex() && j < len(args.Entries) {
 		if rf.log.get(i).Term != args.Entries[j].Term { // conflict happens.
 			rf.log.Entries = rf.log.getRange(rf.log.first().Index, i-1) // delete existing entries
-			//i = rf.log.nextIndex()
 			if i <= rf.commitIndex {
-				log.Fatalf("inst %d: AE Req: follower commitIndex %d, but leader %d trys to overwrite log beginning at index %d",
-					rf.me, rf.commitIndex, args.LeaderId, i)
+				log.Fatalf("%sfollower commitIndex %d, but leader %d trys to overwrite log beginning at index %d",
+					logHeader, rf.commitIndex, args.LeaderId, i)
 			}
 			break
 		}
@@ -291,16 +350,20 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 		rf.log.append(entriesToAppend...)
 		rf.lastNewEntryIndex = rf.log.last().Index
-		log.Printf("inst %d: AE Req: follower appends log entires (last entry index %d)",
-			rf.me, rf.lastNewEntryIndex)
+		log.Printf("%sfollower appends log entires (last entry index %d)",
+			logHeader, rf.lastNewEntryIndex)
 	}
 
 	// #5
 	if args.LeaderCommit > rf.commitIndex && rf.lastNewEntryIndex != -1 {
 		rf.commitIndex = min(args.LeaderCommit, rf.lastNewEntryIndex)
-		log.Printf("inst %d: AE Req: follower commits new logs (commitIndex: %d) at term %d",
-			rf.me, rf.commitIndex, rf.currentTerm)
+		log.Printf("%sfollower commits new logs (commitIndex: %d) at term %d",
+			logHeader, rf.commitIndex, rf.currentTerm)
 	}
+}
+
+func getNextHeartbeatTime() time.Time {
+	return time.Now().Add(HEARTBEAT_FERQUENCY)
 }
 
 // This function must be called in the critical section
@@ -311,10 +374,6 @@ func (rf *Raft) sendHeartbeats() {
 		}
 		go rf.sendAERequestAndHandleReply(i, AE_CONFLICT_RETRIES)
 	}
-}
-
-func getNextHeartbeatTime() time.Time {
-	return time.Now().Add(HEARTBEAT_FERQUENCY)
 }
 
 func (rf *Raft) heartbeatTicker() {

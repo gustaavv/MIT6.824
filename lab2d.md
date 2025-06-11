@@ -7,7 +7,7 @@ http://nil.csail.mit.edu/6.824/2021/labs/lab-raft.html#:~:text=Part%202D:%20log%
 
 ### Refactor: log entry index
 
-Before lab 2D, we are used to using index of `log[]` as the log index. But as mentioned in Hint #3, we need to refactor our code to find another way to store and get log indices before starting to implement the snapshot mechanism. I add a `Index` field to `LogEntry` to achieve this.
+Before lab 2D, we are used to using index of `log[]` as the log index. But as mentioned in Hint #3, we need to refactor our code to find another way to store log indices as well as get them before starting to implement the snapshot mechanism. I add a `Index` field to `LogEntry` to achieve this.
 
 ### InstallSnapshot RPC
 
@@ -29,6 +29,8 @@ Refactoring takes efforts, because Figure 2 is based on using index of `log[]` a
 
 This lab is very hard in terms of difficulty. Despite the fact that Figure 13 probably gives detailed instructions, nobody tells us how to combine Figure 2 and Figure 13, so we must figure out all the corner cases after adding the snapshot mechanism to the existing system. Let alone the code becomes nasty (hard to understand) as a result of covering those corner cases.
 
+It may sounds like I am unreflecting and happy to follow other's instructions. But the main concern is whether adding a new feature will maintain the correctness of the Raft protocol. Unfortunately, I don't how to prove that.
+
 ### Log used in debug
 
 When stuck with a bug for a long time, the built-in log package gets unhandy, because it does not support log level and the log we add to find that bug belongs to DEBUG level. After successful debugging, those log should be turned off (commented out). 
@@ -44,4 +46,16 @@ After trying to refactor Conflict Term Bypassing for a while, I gave up. The mai
 
 A workaround is to upgrade Binary Exponential: the initial value in `successiveLogConflict` is set to 3 instead of 0. Intuitively, this initial value represents the number of AppendEntries RPC round trip we can save when there is a lagging follower. However, setting the value to 3 is kind of intentional, because in `snapcommon()` of `test_test.go`, there are 11 `Start()` being called in each iteration, during which a server may be disconnected or crashed. 
 
-But I think it is ok because the state machine will do snapshot quite often, and therefore whatever log backtracking mode we are using, we will inevitably send InstallSnapshot RPC request quickly after several failing AppendEntries RPC requests. Moreover, the test result turns out to be quite good.
+But I think it is ok because the state machine will do snapshot quite often, and therefore whatever log backtracking mode we are using, we will inevitably send InstallSnapshot RPC request quickly after several failed AppendEntries RPC requests. Moreover, the test result turns out to be quite good.
+
+### An annoying bug
+
+The bug: after implementing AppendEntries RPC fast retry, inconsistency happens. The way I implement fast retry is to let `sendAERequestAndHandleReply()` call itself if the request fails. However, if the reply indicates that this leader is at an older term, it should not send a new request. Otherwise, there will be a split-brain syndrome.
+
+Of course, I didn't realize it was the fast retry that caused this bug at first. I thought it was the snapshot mechanism. But 2D tests never failed, while `TestFigure8Unreliable2C` failed very often, which doesn't involve snapshot or crash, just random delay and disconnect. This is weird, as the new feature only leads to failure when this new feature is not enabled.
+
+So, I added a lot log to try to identify that bug. In the end, I find adding a globally incremental trace ID to each request helps show that a follower, which previously was a leader, is sending AppendEntries RPC requests, causing inconsistency.
+
+The solution is simple: check the instance's state before sending AppendEntries request or InstallSnapshot request, both of which requires leader "privilege" to send.
+
+I have been stuck in this bug for a long time, so I decide to record it.

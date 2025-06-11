@@ -3,9 +3,9 @@ package raft
 import "log"
 
 type LogEntry struct {
+	Index   int
 	Term    int
 	Command interface{}
-	Index   int
 }
 
 type raftLog struct {

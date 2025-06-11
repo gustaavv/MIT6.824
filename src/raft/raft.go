@@ -111,6 +111,18 @@ func (rf *Raft) getDataSummary() string {
 	return ans
 }
 
+func (rf *Raft) GetLogData() string {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	return fmt.Sprintf("%v", rf.log)
+}
+
+func (rf *Raft) GetDataSummary2() string {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	return rf.getDataSummary()
+}
+
 func (rf *Raft) GetCurrentTerm() int {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -314,6 +326,15 @@ func (rf *Raft) killed() bool {
 	return z == 1
 }
 
+func (rf *Raft) checkStatusTicker() {
+	for rf.killed() == false {
+		time.Sleep(time.Second)
+		rf.mu.Lock()
+		log.Printf("inst %d: ticker3: no dead lock", rf.me)
+		rf.mu.Unlock()
+	}
+}
+
 // Make
 // the service or tester wants to create a Raft server. the ports
 // of all the Raft servers (including this one) are in peers[]. this
@@ -384,6 +405,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	go rf.electionTimeoutTicker()
 	go rf.heartbeatTicker()
 	go rf.applyLogEntryTicker()
+	go rf.checkStatusTicker()
 
 	return rf
 }

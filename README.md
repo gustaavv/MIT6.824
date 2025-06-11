@@ -12,4 +12,5 @@ Checkout the corresponding tag to see the final code of each lab.
 | Lab 2A | Raft leader election   | `lab2a` tag | ✅                | [lab2a.md](./lab2a.md) |
 | Lab 2B | Raft log replication   | `lab2b` tag | ✅                | [lab2b.md](./lab2b.md) |
 | Lab 2C | Raft state persistence | `lab2c` tag | ✅                | [lab2c.md](./lab2c.md) |
+| Lab 2D | Raft log compaction    | `lab2d` tag | ✅                | [lab2d.md](./lab2d.md) |
 
