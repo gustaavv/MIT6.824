@@ -13,5 +13,6 @@ Checkout the corresponding tag to see the final code of each lab.
 | Lab 2B | Raft log replication   | `lab2b` tag | ✅                | [lab2b.md](./report/lab2b.md) |
 | Lab 2C | Raft state persistence | `lab2c` tag | ✅                | [lab2c.md](./report/lab2c.md) |
 | Lab 2D | Raft log compaction    | `lab2d` tag | ✅                | [lab2d.md](./report/lab2d.md) |
+| Lab 2  | Raft                   | `lab2` tag  | ✅                |                               |
 
 You can run the tests by running GitHub Actions workflows after forking this repository.
