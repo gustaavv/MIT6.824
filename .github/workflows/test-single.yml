@@ -21,7 +21,7 @@ on:
         description: "# rounds to run the test"
         required: true
         type: choice
-        default: "10"
+        default: "1"
         options:
           - "1"
           - "5"
@@ -49,4 +49,16 @@ jobs:
           go-version: 1.15
 
       - name: Run tests
-        run: cd src/${{ github.event.inputs.subfolder }} && for i in {1..${{ github.event.inputs.round }}}; do rm -f app.log && time go test -run ${{ github.event.inputs.testcase }} -race || break; done
+        run: |
+          cd src/${{ github.event.inputs.subfolder }}
+          for i in {1..${{ github.event.inputs.round }}}
+          do
+            echo "Round $i:"
+            rm -f app.log
+            time go test -run ${{ github.event.inputs.testcase }} -race
+            if [ $? -ne 0 ]; then
+              echo "Test failed in round $i. Exiting loop."
+              exit 1
+            fi
+          done
+          echo "Test succeeds"
