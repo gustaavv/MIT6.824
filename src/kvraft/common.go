@@ -6,9 +6,7 @@ const (
 	ErrWrongLeader = "ErrWrongLeader"
 )
 
-type Err string
-
-// Put or Append
+// PutAppendArgs Put or Append
 type PutAppendArgs struct {
 	Key   string
 	Value string
@@ -19,7 +17,6 @@ type PutAppendArgs struct {
 }
 
 type PutAppendReply struct {
-	Err Err
 }
 
 type GetArgs struct {
@@ -28,6 +25,5 @@ type GetArgs struct {
 }
 
 type GetReply struct {
-	Err   Err
 	Value string
 }
