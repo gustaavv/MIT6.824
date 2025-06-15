@@ -1,29 +1,46 @@
 package kvraft
 
+import "fmt"
+
 const (
-	OK             = "OK"
-	ErrNoKey       = "ErrNoKey"
-	ErrWrongLeader = "ErrWrongLeader"
+	OP_GET    = "Get"
+	OP_PUT    = "Put"
+	OP_APPEND = "Append"
 )
 
-// PutAppendArgs Put or Append
-type PutAppendArgs struct {
+const (
+	MSG_OLD_XID        = "OLD_XID"
+	MSG_NOT_LEADER     = "NOT_LEADER"
+	MSG_MULTIPLE_XID   = "MULTIPLE_XID"
+	MSG_OP_UNSUPPORTED = "OP_UNSUPPORTED"
+)
+
+type KVArgs struct {
+	Cid int
+	Xid int
+	Tid int
+
 	Key   string
 	Value string
-	Op    string // "Put" or "Append"
-	// You'll have to add definitions here.
-	// Field names must start with capital letters,
-	// otherwise RPC will break.
+	Op    string // Get, Put, Append
 }
 
-type PutAppendReply struct {
+func (kva *KVArgs) String() string {
+	return fmt.Sprintf(
+		"KVArgs{Cid: %d, Xid: %d, Tid: %d, Key: %q, Value: %q, Op: %q}",
+		kva.Cid, kva.Xid, kva.Tid, kva.Key, logV(kva.Value), kva.Op,
+	)
 }
 
-type GetArgs struct {
-	Key string
-	// You'll have to add definitions here.
+type KVReply struct {
+	Success bool
+	Msg     string
+	Value   string
 }
 
-type GetReply struct {
-	Value string
+func (kvr *KVReply) String() string {
+	return fmt.Sprintf(
+		"KVReply{Success: %v, Msg: %q, Value: %q}",
+		kvr.Success, kvr.Msg, logV(kvr.Value),
+	)
 }

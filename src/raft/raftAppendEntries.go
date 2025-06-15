@@ -49,12 +49,12 @@ func (rf *Raft) sendAERequestAndHandleReply(peerIndex int, conflictRetries int) 
 		return
 	}
 
-	firstIndex, nextIndex := -1, -1
-	if !rf.log.isEmpty() {
-		firstIndex, nextIndex = rf.log.first().Index, rf.log.nextIndex()
-	}
-	log.Printf("inst %d: AE Req: Trace: %d: inst %d's nextIndex: %d. log first entry index: %d, log next index: %d",
-		rf.me, traceId, peerIndex, rf.nextIndex[peerIndex], firstIndex, nextIndex)
+	//firstIndex, nextIndex := -1, -1
+	//if !rf.log.isEmpty() {
+	//	firstIndex, nextIndex = rf.log.first().Index, rf.log.nextIndex()
+	//}
+	//log.Printf("inst %d: AE Req: Trace: %d: inst %d's nextIndex: %d. log first entry index: %d, log next index: %d",
+	//	rf.me, traceId, peerIndex, rf.nextIndex[peerIndex], firstIndex, nextIndex)
 
 	prevLogIndex := rf.SnapShot.LastIncludedIndex
 	prevLogTerm := rf.SnapShot.LastIncludedTerm
@@ -95,7 +95,7 @@ func (rf *Raft) sendAERequestAndHandleReply(peerIndex int, conflictRetries int) 
 
 	logHeader := fmt.Sprintf("inst %d: AE Resp: Trace: %d: ", rf.me, reply.TraceId)
 
-	log.Printf("%sinst %d reply success: %v", logHeader, peerIndex, reply.Success)
+	//log.Printf("%sinst %d reply success: %v", logHeader, peerIndex, reply.Success)
 
 	if reply.Term > rf.currentTerm {
 		log.Printf("%s%s becomes follower because inst %d with higher term: %d -> %d",
@@ -119,8 +119,8 @@ func (rf *Raft) sendAERequestAndHandleReply(peerIndex int, conflictRetries int) 
 		// we need to guard against old reply in the same term, which acknowledged old (smaller) matchIndex
 		// because matchIndex should not go back
 		if prevLogIndex+len(entries) > rf.matchIndex[peerIndex] {
-			log.Printf("%sleader updates matchIndex[%d]: %d -> %d",
-				logHeader, peerIndex, rf.matchIndex[peerIndex], prevLogIndex+len(entries))
+			//log.Printf("%sleader updates matchIndex[%d]: %d -> %d",
+			//	logHeader, peerIndex, rf.matchIndex[peerIndex], prevLogIndex+len(entries))
 			rf.matchIndex[peerIndex] = prevLogIndex + len(entries)
 			if LOG_BACKTRACKING_MODE != LOG_BT_AGGRESSIVE {
 				rf.nextIndex[peerIndex] = rf.matchIndex[peerIndex] + 1

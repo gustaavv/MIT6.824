@@ -98,6 +98,13 @@ type Raft struct {
 	applyLogEntryAt          time.Time // for apply log entry cronjob
 	firstLogIndexCurrentTerm int       // see Figure 2 | Rules for servers | Leaders last rule
 	successiveLogConflict    []int     // for LOG_BT_BIN_EXP
+	enableSnapshot           bool      // for lab3
+}
+
+func (rf *Raft) SetEnableSnapshot(enableSnapshot bool) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	rf.enableSnapshot = enableSnapshot
 }
 
 func (rf *Raft) getDataSummary() string {
@@ -192,12 +199,16 @@ func (rf *Raft) persist() {
 	}
 	stateData := w.Bytes()
 
-	w = new(bytes.Buffer)
-	e = labgob.NewEncoder(w)
-	if err := e.Encode(rf.SnapShot); err != nil {
-		log.Fatalf("inst %d: persist log err: %v", rf.me, err)
+	snapshotData := make([]byte, 0)
+
+	if rf.enableSnapshot {
+		w = new(bytes.Buffer)
+		e = labgob.NewEncoder(w)
+		if err := e.Encode(rf.SnapShot); err != nil {
+			log.Fatalf("inst %d: persist log err: %v", rf.me, err)
+		}
+		snapshotData = w.Bytes()
 	}
-	snapshotData := w.Bytes()
 
 	rf.persister.SaveStateAndSnapshot(stateData, snapshotData)
 	//log.Printf("inst %d: persist log finished, data len: %d", rf.me, len(data))
@@ -393,6 +404,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.applyLogEntryAt = getNextApplyLogEntryTime()
 	rf.firstLogIndexCurrentTerm = 0
 	rf.successiveLogConflict = make([]int, len(rf.peers))
+	rf.enableSnapshot = true
 
 	// initialize from state persisted and snapshot before a crash
 	// if there is no persist data before, no field of rf will be changed

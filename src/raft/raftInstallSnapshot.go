@@ -22,6 +22,11 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+
+	if !rf.enableSnapshot {
+		return
+	}
+
 	defer rf.persist()
 
 	logHeader := fmt.Sprintf("inst %d: snapshot: ", rf.me)
@@ -186,6 +191,10 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 	// Your code here (2D).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+
+	if !rf.enableSnapshot {
+		return false
+	}
 
 	logHeader := fmt.Sprintf("inst %d: CondIS: snapshotId: %d: ", rf.me, snapshotId)
 
