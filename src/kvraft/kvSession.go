@@ -3,27 +3,26 @@ package kvraft
 import "sync"
 
 type clientSession struct {
-	mu             sync.Mutex
-	cid            int
-	lastAppliedXid int
-	lastSeenXid    int
-	lastResp       *KVReply
-	condMu         sync.Mutex
-	cond           *sync.Cond
+	mu       sync.Mutex
+	cid      int
+	lastXid  int
+	lastResp *KVReply
+	condMu   sync.Mutex
+	cond     *sync.Cond
 }
 
-func (cs *clientSession) getLastAppliedXidAndResp() (lastAppliedXid int, lastResp KVReply) {
+func (cs *clientSession) getLastXidAndResp() (lastXid int, lastResp KVReply) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
-	lastAppliedXid = cs.lastAppliedXid
+	lastXid = cs.lastXid
 	lastResp = *cs.lastResp
 	return
 }
 
-func (cs *clientSession) setLastAppliedXidAndResp(lastAppliedXid int, lastResp KVReply) {
+func (cs *clientSession) setLastXidAndResp(lastXid int, lastResp KVReply) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
-	cs.lastAppliedXid = lastAppliedXid
+	cs.lastXid = lastXid
 	cs.lastResp = &lastResp
 }
 

@@ -101,21 +101,12 @@ type Raft struct {
 	successiveLogConflict    []int // for LOG_BT_BIN_EXP
 	enableSnapshot           bool  // for lab3
 
-	// persistent
-
-	lastAppliedPersist int
 }
 
 func (rf *Raft) SetEnableSnapshot(enableSnapshot bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	rf.enableSnapshot = enableSnapshot
-}
-
-func (rf *Raft) GetLastAppliedPersist() int {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	return rf.lastAppliedPersist
 }
 
 func (rf *Raft) getDataSummary() string {
@@ -188,6 +179,8 @@ func (rf *Raft) GetState() (int, bool) {
 // This function must be called in a critical section
 //
 func (rf *Raft) persist() {
+	// TODO: add parameters for a more granular persist to improve performance
+
 	// Your code here (2C).
 	// Example:
 	// w := new(bytes.Buffer)
@@ -206,9 +199,6 @@ func (rf *Raft) persist() {
 		log.Fatalf("inst %d: persist log err: %v", rf.me, err)
 	}
 	if err := e.Encode(rf.log); err != nil {
-		log.Fatalf("inst %d: persist log err: %v", rf.me, err)
-	}
-	if err := e.Encode(rf.lastAppliedPersist); err != nil {
 		log.Fatalf("inst %d: persist log err: %v", rf.me, err)
 	}
 	stateData := w.Bytes()
@@ -257,18 +247,15 @@ func (rf *Raft) readPersist(stateData []byte, snapshotData []byte) {
 	var currentTerm int
 	var votedFor int
 	var raftLog raftLog
-	var lastAppliedPersist int
 
 	if d.Decode(&currentTerm) != nil ||
 		d.Decode(&votedFor) != nil ||
-		d.Decode(&raftLog) != nil ||
-		d.Decode(&lastAppliedPersist) != nil {
+		d.Decode(&raftLog) != nil {
 		log.Fatalf("%serror happens when decoding", logHeader)
 	} else {
 		rf.currentTerm = currentTerm
 		rf.votedFor = votedFor
 		rf.log = raftLog
-		rf.lastAppliedPersist = lastAppliedPersist
 	}
 
 	if snapshotData == nil || len(snapshotData) < 1 {
@@ -361,6 +348,56 @@ func (rf *Raft) killed() bool {
 	return z == 1
 }
 
+func (rf *Raft) applyLogEntry() {
+	logHeader := fmt.Sprintf("inst %d: ticker2: ", rf.me)
+	lastRound := time.Now()
+	for rf.killed() == false {
+		//time.Sleep(APPLY_LOGENTRY_FREQUENCY)
+
+		var applyMsg *ApplyMsg = nil
+		var instState = ""
+
+		rf.mu.Lock()
+
+		if rf.commitIndex > rf.lastApplied {
+			rf.lastApplied++
+			//rf.lastAppliedPersist = max(rf.lastApplied, rf.lastAppliedPersist)
+			//rf.persist()
+
+			if entry := rf.log.get(rf.lastApplied); entry == nil {
+				log.Fatalf("%slastApplied: %d, log index range: [%d, %d]",
+					logHeader, rf.lastApplied, rf.log.first().Index, rf.log.last().Index)
+			}
+
+			applyMsg = &ApplyMsg{
+				CommandValid: true,
+				CommandIndex: rf.lastApplied,
+				Command:      rf.log.get(rf.lastApplied).Command,
+			}
+
+			instState = rf.state // copy this field to prevent data race
+		} else {
+			rf.mu.Unlock()
+			rf.applyLogEntryMu.Lock()
+			rf.applyLogEntryCond.Wait()
+			rf.applyLogEntryMu.Unlock()
+			continue
+		}
+
+		rf.mu.Unlock()
+
+		// this channel may block, so we need to send applyMsg outside the
+		// critical section to prevent holding the lock for too long
+		if applyMsg != nil {
+			rf.applyCh <- *applyMsg
+			log.Printf("%s%s applied log index: %v", logHeader, instState, applyMsg.CommandIndex)
+			log.Printf("%s%.3f seconds passed since last applied", logHeader, time.Since(lastRound).Seconds())
+			lastRound = time.Now()
+		}
+
+	}
+}
+
 func (rf *Raft) checkStatusTicker() {
 	logHeader := fmt.Sprintf("inst %d: ticker3: ", rf.me)
 	for rf.killed() == false {
@@ -440,9 +477,10 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	log.Printf("inst %d: Make: read persist: %s", rf.me, rf.getDataSummary())
 	log.Printf("inst %d: start as follower", rf.me)
 
+	go rf.applyLogEntry()
+
 	go rf.electionTimeoutTicker()
 	go rf.heartbeatTicker()
-	go rf.applyLogEntryTicker()
 	go rf.checkStatusTicker()
 
 	return rf

@@ -244,7 +244,6 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 		// update other states
 		rf.commitIndex = lastIncludedIndex
 		rf.lastApplied = lastIncludedIndex
-		rf.lastAppliedPersist = lastIncludedIndex
 
 		rf.persist()
 

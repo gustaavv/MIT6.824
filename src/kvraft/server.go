@@ -23,12 +23,9 @@ type KVServer struct {
 
 	// Your definitions here.
 
-	store              map[string]string
-	session            session
-	lastAppliedPersist int
-	currentApplied     int
-	initing            bool
-	startAt            time.Time
+	store   map[string]string
+	session session
+	startAt time.Time
 }
 
 // Kill
@@ -81,13 +78,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	if maxraftstate < 0 {
 		kv.rf.SetEnableSnapshot(false)
 	}
-	kv.lastAppliedPersist = kv.rf.GetLastAppliedPersist()
-	kv.currentApplied = 0
-	kv.initing = kv.currentApplied < kv.lastAppliedPersist && false
 	kv.startAt = time.Now()
-	if kv.initing {
-		log.Printf("%siniting", logHeader)
-	}
 
 	// You may need initialization code here.
 	kv.store = make(map[string]string)
@@ -95,6 +86,8 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 
 	go kv.consumeApplyCh()
 	go kv.checkLeaderTicker()
+
+	log.Printf("%s started", logHeader)
 
 	return kv
 }
@@ -108,15 +101,6 @@ func (kv *KVServer) HandleRequest(args *KVArgs, reply *KVReply) {
 		log.Printf("%s%s %s", logHeader, args.String(), reply.String())
 	}()
 
-	kv.mu.Lock()
-	if kv.initing {
-		reply.Success = false
-		reply.Msg = MSG_INIT
-		kv.mu.Unlock()
-		return
-	}
-	kv.mu.Unlock()
-
 	if !(args.Op == OP_GET || args.Op == OP_PUT || args.Op == OP_APPEND) {
 		reply.Success = false
 		reply.Msg = MSG_OP_UNSUPPORTED
@@ -126,12 +110,12 @@ func (kv *KVServer) HandleRequest(args *KVArgs, reply *KVReply) {
 	cs := kv.session.getClientSession(args.Cid)
 
 	// validate xid and use cache
-	lastAppliedXid, lastResp := cs.getLastAppliedXidAndResp()
-	if lastAppliedXid > args.Xid {
+	lastXid, lastResp := cs.getLastXidAndResp()
+	if lastXid > args.Xid {
 		reply.Success = false
 		reply.Msg = MSG_OLD_XID
 		return
-	} else if lastAppliedXid == args.Xid {
+	} else if lastXid == args.Xid {
 		*reply = lastResp
 		return
 	}
@@ -159,13 +143,13 @@ func (kv *KVServer) HandleRequest(args *KVArgs, reply *KVReply) {
 
 	// wait until the request has been handled
 	cs.condMu.Lock()
-	for lastAppliedXid < args.Xid {
+	for lastXid < args.Xid {
 		cs.cond.Wait()
-		lastAppliedXid, lastResp = cs.getLastAppliedXidAndResp()
+		lastXid, lastResp = cs.getLastXidAndResp()
 	}
 	cs.condMu.Unlock()
 
-	if lastAppliedXid == args.Xid {
+	if lastXid == args.Xid {
 		*reply = lastResp
 	} else {
 		// a greater xid has been handled, suggesting that the client does not send one request at a time
@@ -191,7 +175,7 @@ func (kv *KVServer) consumeApplyCh() {
 
 		args := applyMsg.Command.(KVArgs)
 		cs := kv.session.getClientSession(args.Cid)
-		lastXid, _ := cs.getLastAppliedXidAndResp()
+		lastXid, _ := cs.getLastXidAndResp()
 
 		logHeader := fmt.Sprintf("srv %d: consume applyMsg: index: %d: ck %d: xid %d: ",
 			kv.me, applyMsg.CommandIndex, args.Cid, args.Xid)
@@ -216,25 +200,15 @@ func (kv *KVServer) consumeApplyCh() {
 				kv.store[args.Key] = v + args.Value
 			}
 
-			cs.setLastAppliedXidAndResp(args.Xid, reply)
+			cs.setLastXidAndResp(args.Xid, reply)
 			log.Printf("%shandle %s succeeds, key %q, value %q", logHeader, args.Op, args.Key, logV(reply.Value))
 		} else if lastXid > args.Xid {
-			log.Printf("%sWARN: lastAppliedXid %d > args.Xid %d", logHeader, lastXid, args.Xid)
+			log.Printf("%sWARN: lastXid %d > args.Xid %d", logHeader, lastXid, args.Xid)
 		}
 
-		if kv.currentApplied >= kv.lastAppliedPersist {
-			cs.condMu.Lock()
-			cs.cond.Broadcast()
-			cs.condMu.Unlock()
-		}
-
-		kv.currentApplied = applyMsg.CommandIndex
-		if kv.currentApplied == kv.lastAppliedPersist {
-			kv.mu.Lock()
-			kv.initing = false
-			log.Printf("srv %d: init takes %.3f seconds", kv.me, time.Since(kv.startAt).Seconds())
-			kv.mu.Unlock()
-		}
+		cs.condMu.Lock()
+		cs.cond.Broadcast()
+		cs.condMu.Unlock()
 
 		//log.Printf("%stakes %.4f seconds", logHeader, time.Since(start).Seconds())
 	}
