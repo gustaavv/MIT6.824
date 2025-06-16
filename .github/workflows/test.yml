@@ -26,6 +26,8 @@ jobs:
             command: cd src/raft && time go test -run 2D -race
           - name: Lab 2
             command: cd src/raft && time go test -race
+          - name: Lab 3A
+            command: cd src/kvraft && time go test -run 3A -race
 
       fail-fast: false
 
