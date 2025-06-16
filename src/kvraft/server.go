@@ -101,6 +101,13 @@ func (kv *KVServer) HandleRequest(args *KVArgs, reply *KVReply) {
 		log.Printf("%s%s %s", logHeader, args.String(), reply.String())
 	}()
 
+	_, isLeader := kv.rf.GetState()
+	if !isLeader {
+		reply.Success = false
+		reply.Msg = MSG_NOT_LEADER
+		return
+	}
+
 	if !(args.Op == OP_GET || args.Op == OP_PUT || args.Op == OP_APPEND) {
 		reply.Success = false
 		reply.Msg = MSG_OP_UNSUPPORTED
@@ -133,7 +140,7 @@ func (kv *KVServer) HandleRequest(args *KVArgs, reply *KVReply) {
 	//}
 	//cs.mu.Unlock()
 
-	_, _, isLeader := kv.rf.Start(*args)
+	_, _, isLeader = kv.rf.Start(*args)
 
 	if !isLeader {
 		reply.Success = false

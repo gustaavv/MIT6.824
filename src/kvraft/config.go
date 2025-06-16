@@ -74,6 +74,11 @@ func (cfg *config) cleanup() {
 			cfg.kvservers[i].Kill()
 		}
 	}
+
+	for ck := range cfg.clerks {
+		ck.Kill()
+	}
+
 	cfg.net.Cleanup()
 	cfg.checkTimeout()
 }

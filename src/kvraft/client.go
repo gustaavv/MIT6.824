@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"6.824/labrpc"
@@ -15,15 +16,56 @@ type Clerk struct {
 	servers []*labrpc.ClientEnd
 	// You will have to modify this struct.
 
-	mu sync.Mutex
+	mu   sync.Mutex
+	dead int32 // set by Kill()
 
 	cid int
+
+	// last completed operation
+	lastXid int
+	// xid -> KVReply.Value
+	respCache map[int]string
 
 	tidGenerator uidGenerator
 	xidGenerator uidGenerator
 
-	serverStatusArr         []*ServerStatusReply
+	serverStatus            []*ServerStatusReply
 	lastQueryServerStatusAt time.Time
+	allLeaderIndex          []int // see getPossibleLeaders
+}
+
+func (ck *Clerk) setRespCache(xid int, value string) {
+	ck.mu.Lock()
+	defer ck.mu.Unlock()
+	ck.respCache[xid] = value
+}
+
+func (ck *Clerk) getRespCache(xid int) (value string, existed bool) {
+	ck.mu.Lock()
+	defer ck.mu.Unlock()
+	value, existed = ck.respCache[xid]
+	return
+}
+
+func (ck *Clerk) setLastXid(xid int) {
+	ck.mu.Lock()
+	defer ck.mu.Unlock()
+	ck.lastXid = max(xid, ck.lastXid)
+}
+
+func (ck *Clerk) getLastXid() int {
+	ck.mu.Lock()
+	defer ck.mu.Unlock()
+	return ck.lastXid
+}
+
+func (ck *Clerk) Kill() {
+	atomic.StoreInt32(&ck.dead, 1)
+}
+
+func (ck *Clerk) killed() bool {
+	z := atomic.LoadInt32(&ck.dead)
+	return z == 1
 }
 
 func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
@@ -33,11 +75,19 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 
 	ck.cid = clerkIdGenerator.nextUid()
 
-	ck.serverStatusArr = make([]*ServerStatusReply, len(servers))
+	ck.respCache = make(map[int]string)
+
+	ck.serverStatus = make([]*ServerStatusReply, len(servers))
 	for i := 0; i < len(servers); i++ {
-		ck.serverStatusArr[i] = &ServerStatusReply{}
+		ck.serverStatus[i] = &ServerStatusReply{}
 	}
 	ck.lastQueryServerStatusAt = time.Now()
+
+	ck.allLeaderIndex = make([]int, len(servers))
+	for i := 0; i < len(servers); i++ {
+		ck.allLeaderIndex[i] = i
+	}
+
 	go ck.queryAllServerStatus()
 
 	go ck.queryServerStatusTicker()
@@ -46,11 +96,23 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 }
 
 func (ck *Clerk) doRequest(key string, value string, op string, xid int, count int) string {
-	replyCh := make(chan string)
-	//defer close(replyCh) // TODO: is this necessary?
-	timeout := time.After(REQUEST_TIMEOUT)
+	if ck.killed() {
+		return ""
+	}
 
 	logHeader := fmt.Sprintf("ck %d: xid %d: count %d: ", ck.cid, xid, count)
+
+	if lastXid := ck.getLastXid(); xid <= lastXid {
+		resp, existed := ck.getRespCache(xid)
+		if existed {
+			return resp
+		} else {
+			log.Fatalf("%slastXid %d, but its resp not existed in cache", logHeader, lastXid)
+		}
+	}
+
+	replyCh := make(chan string)
+	timeout := time.After(REQUEST_TIMEOUT)
 
 	leaders := ck.getPossibleLeaders()
 	log.Printf("%spossible leaders: %v", logHeader, leaders)
@@ -72,30 +134,27 @@ func (ck *Clerk) doRequest(key string, value string, op string, xid int, count i
 			logHeader := fmt.Sprintf("ck %d: xid %d: tid %d: count %d: srv %d: ", ck.cid, xid, args.Tid, count, i)
 
 			if !ok {
-				// TODO: ck.serverStatusArr[i].isLeader = false ?
 				return
 			}
 
 			if reply.Success {
-				ck.mu.Lock()
-				ck.serverStatusArr[i].IsLeader = true
-				ck.mu.Unlock()
+				ck.setServerStatus(i, args.Tid, true)
+				ck.setRespCache(xid, reply.Value)
+				ck.setLastXid(xid)
 				replyCh <- reply.Value
 				log.Printf("%s%s succeeds, key %q, value %q", logHeader, op, key, logV(reply.Value))
 			} else {
 				switch reply.Msg {
 				case MSG_NOT_LEADER:
-					ck.mu.Lock()
-					ck.serverStatusArr[i].IsLeader = false
-					ck.mu.Unlock()
+					ck.setServerStatus(i, args.Tid, false)
 				case MSG_OLD_XID:
 					log.Printf("%swarn: send request with old xid to leader", logHeader)
+					ck.setServerStatus(i, args.Tid, true)
 				case MSG_MULTIPLE_XID:
 					log.Printf("%swarn: wrong use of client, you should send requests with one xid at a time", logHeader)
+					ck.setServerStatus(i, args.Tid, true)
 				case MSG_OP_UNSUPPORTED:
 					log.Fatalf("%sunsupported operation %s", logHeader, args.Op)
-				case MSG_INIT:
-					log.Printf("%sserver is initing, not accepting requests", logHeader)
 				}
 			}
 		}()
@@ -106,8 +165,7 @@ func (ck *Clerk) doRequest(key string, value string, op string, xid int, count i
 		return v
 	case <-timeout:
 		log.Printf("%stimeout, resend requests", logHeader)
-		// TODO: maybe not need to reset
-		ck.resetPossibleLeaders()
+		//ck.resetPossibleLeaders()
 		return ck.doRequest(key, value, op, xid, count+1) // TODO: set max retries?
 	}
 }

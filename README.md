@@ -1,4 +1,4 @@
-# MIT 6.824
+# MIT 6.824 Distributed Systems 2021
 
 Course website: http://nil.csail.mit.edu/6.824/2021/schedule.html
 

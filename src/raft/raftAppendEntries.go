@@ -28,6 +28,9 @@ type AppendEntriesReply struct {
 }
 
 func (rf *Raft) sendAERequestAndHandleReply(peerIndex int, conflictRetries int) {
+	if rf.killed() {
+		return
+	}
 	peer := rf.peers[peerIndex]
 
 	// copy rf's state before putting into args
@@ -357,6 +360,10 @@ func getNextHeartbeatTime() time.Time {
 
 // This function must be called in the critical section
 func (rf *Raft) sendHeartbeats() {
+	if rf.killed() {
+		return
+	}
+
 	for i := range rf.peers {
 		if i == rf.me {
 			continue
