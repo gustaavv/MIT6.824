@@ -51,6 +51,14 @@ func (ck *Clerk) getPossibleLeaders() []int {
 	return ans
 }
 
+func (ck *Clerk) resetPossibleLeaders() {
+	ck.mu.Lock()
+	defer ck.mu.Unlock()
+	for i := range ck.serverStatusArr {
+		ck.serverStatusArr[i].IsLeader = false
+	}
+}
+
 func (ck *Clerk) querySingleServerStatus(index int) {
 	server := ck.servers[index]
 
@@ -69,6 +77,10 @@ func (ck *Clerk) querySingleServerStatus(index int) {
 }
 
 func (ck *Clerk) queryAllServerStatus() {
+	if !ENABLE_QUERY_SERVER_STATUS {
+		return
+	}
+
 	for i := range ck.servers {
 		go ck.querySingleServerStatus(i)
 	}
@@ -80,6 +92,11 @@ func getNextQueryServerStatusAt() time.Time {
 
 func (ck *Clerk) queryServerStatusTicker() {
 	// TODO: how will a clerk be killed?
+
+	if !ENABLE_QUERY_SERVER_STATUS {
+		return
+	}
+
 	for {
 		time.Sleep(TICKER_FREQUENCY)
 

@@ -195,6 +195,9 @@ func (rf *Raft) sendAERequestAndHandleReply(peerIndex int, conflictRetries int) 
 			break
 		}
 		N++
+		rf.applyLogEntryMu.Lock()
+		rf.applyLogEntryCond.Broadcast()
+		rf.applyLogEntryMu.Unlock()
 	}
 
 	// fast retry
@@ -342,6 +345,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.commitIndex = min(args.LeaderCommit, rf.lastNewEntryIndex)
 		log.Printf("%sfollower commits new logs (commitIndex: %d) at term %d",
 			logHeader, rf.commitIndex, rf.currentTerm)
+		rf.applyLogEntryMu.Lock()
+		rf.applyLogEntryCond.Broadcast()
+		rf.applyLogEntryMu.Unlock()
 	}
 }
 

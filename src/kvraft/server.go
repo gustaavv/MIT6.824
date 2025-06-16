@@ -5,6 +5,7 @@ import (
 	"log"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"6.824/labgob"
 	"6.824/labrpc"
@@ -21,8 +22,13 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
-	store   map[string]string
-	session session
+
+	store              map[string]string
+	session            session
+	lastAppliedPersist int
+	currentApplied     int
+	initing            bool
+	startAt            time.Time
 }
 
 // Kill
@@ -65,6 +71,8 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	// Go's RPC library to marshall/unmarshall.
 	labgob.Register(KVArgs{})
 
+	logHeader := fmt.Sprintf("srv %d: starting: ", me)
+
 	kv := new(KVServer)
 	kv.me = me
 	kv.maxraftstate = maxraftstate
@@ -73,12 +81,20 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	if maxraftstate < 0 {
 		kv.rf.SetEnableSnapshot(false)
 	}
+	kv.lastAppliedPersist = kv.rf.GetLastAppliedPersist()
+	kv.currentApplied = 0
+	kv.initing = kv.currentApplied < kv.lastAppliedPersist && false
+	kv.startAt = time.Now()
+	if kv.initing {
+		log.Printf("%siniting", logHeader)
+	}
 
 	// You may need initialization code here.
 	kv.store = make(map[string]string)
 	kv.session.clientSessionMap = make(map[int]*clientSession)
 
 	go kv.consumeApplyCh()
+	go kv.checkLeaderTicker()
 
 	return kv
 }
@@ -89,8 +105,17 @@ func (kv *KVServer) HandleRequest(args *KVArgs, reply *KVReply) {
 	logHeader := fmt.Sprintf("srv %d: ", kv.me)
 	log.Printf("%s%s", logHeader, args.String())
 	defer func() {
-		log.Printf("%s%s", logHeader, reply.String())
+		log.Printf("%s%s %s", logHeader, args.String(), reply.String())
 	}()
+
+	kv.mu.Lock()
+	if kv.initing {
+		reply.Success = false
+		reply.Msg = MSG_INIT
+		kv.mu.Unlock()
+		return
+	}
+	kv.mu.Unlock()
 
 	if !(args.Op == OP_GET || args.Op == OP_PUT || args.Op == OP_APPEND) {
 		reply.Success = false
@@ -112,7 +137,7 @@ func (kv *KVServer) HandleRequest(args *KVArgs, reply *KVReply) {
 	}
 
 	//_, isLeader := kv.rf.GetState()
-
+	//
 	//cs.mu.Lock()
 	//// avoid append duplicate log entries of the same xid
 	//if cs.lastSeenXid < args.Xid && isLeader {
@@ -151,9 +176,16 @@ func (kv *KVServer) HandleRequest(args *KVArgs, reply *KVReply) {
 
 func (kv *KVServer) consumeApplyCh() {
 	for applyMsg := range kv.applyCh {
-		//log.Printf("srv %d: comsume applyMsg: %v", kv.me, applyMsg)
+		//start := time.Now()
+
+		//log.Printf("srv %d: consume applyMsg: %v", kv.me, applyMsg)
 		if !applyMsg.CommandValid {
 			// TODO: snapshot in 3B
+			continue
+		}
+
+		// no-op
+		if applyMsg.Command == nil {
 			continue
 		}
 
@@ -161,7 +193,8 @@ func (kv *KVServer) consumeApplyCh() {
 		cs := kv.session.getClientSession(args.Cid)
 		lastXid, _ := cs.getLastAppliedXidAndResp()
 
-		logHeader := fmt.Sprintf("srv %d: comsume applyMsg: ck %d: xid %d: ", kv.me, args.Cid, args.Xid)
+		logHeader := fmt.Sprintf("srv %d: consume applyMsg: index: %d: ck %d: xid %d: ",
+			kv.me, applyMsg.CommandIndex, args.Cid, args.Xid)
 
 		if lastXid < args.Xid {
 			reply := KVReply{Success: true}
@@ -189,8 +222,36 @@ func (kv *KVServer) consumeApplyCh() {
 			log.Printf("%sWARN: lastAppliedXid %d > args.Xid %d", logHeader, lastXid, args.Xid)
 		}
 
-		cs.condMu.Lock()
-		cs.cond.Broadcast()
-		cs.condMu.Unlock()
+		if kv.currentApplied >= kv.lastAppliedPersist {
+			cs.condMu.Lock()
+			cs.cond.Broadcast()
+			cs.condMu.Unlock()
+		}
+
+		kv.currentApplied = applyMsg.CommandIndex
+		if kv.currentApplied == kv.lastAppliedPersist {
+			kv.mu.Lock()
+			kv.initing = false
+			log.Printf("srv %d: init takes %.3f seconds", kv.me, time.Since(kv.startAt).Seconds())
+			kv.mu.Unlock()
+		}
+
+		//log.Printf("%stakes %.4f seconds", logHeader, time.Since(start).Seconds())
+	}
+}
+
+func (kv *KVServer) checkLeaderTicker() {
+	isLeader := false
+	for !kv.killed() {
+		time.Sleep(TICKER_FREQUENCY)
+		_, isLeader2 := kv.rf.GetState()
+
+		// rf elected as the new leader
+		if !isLeader && isLeader2 {
+			// start a no-op for quick committing and for avoiding deadlock
+			kv.rf.Start(nil)
+		}
+
+		isLeader = isLeader2
 	}
 }

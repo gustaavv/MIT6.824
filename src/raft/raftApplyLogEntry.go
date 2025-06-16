@@ -6,26 +6,21 @@ import (
 	"time"
 )
 
-func getNextApplyLogEntryTime() time.Time {
-	return time.Now().Add(APPLY_LOGENTRY_FREQUENCY)
-}
-
 func (rf *Raft) applyLogEntryTicker() {
 	logHeader := fmt.Sprintf("inst %d: ticker2: ", rf.me)
+	lastRound := time.Now()
 	for rf.killed() == false {
-		time.Sleep(TICKER_FREQUENCY)
+		//time.Sleep(APPLY_LOGENTRY_FREQUENCY)
 
 		var applyMsg *ApplyMsg = nil
 		var instState = ""
 
 		rf.mu.Lock()
-		if rf.applyLogEntryAt.After(time.Now()) { // no need to apply log entry now
-			rf.mu.Unlock()
-			continue
-		}
 
 		if rf.commitIndex > rf.lastApplied {
 			rf.lastApplied++
+			//rf.lastAppliedPersist = max(rf.lastApplied, rf.lastAppliedPersist)
+			//rf.persist()
 
 			if entry := rf.log.get(rf.lastApplied); entry == nil {
 				log.Fatalf("%slastApplied: %d, log index range: [%d, %d]",
@@ -39,9 +34,14 @@ func (rf *Raft) applyLogEntryTicker() {
 			}
 
 			instState = rf.state // copy this field to prevent data race
+		} else {
+			rf.mu.Unlock()
+			rf.applyLogEntryMu.Lock()
+			rf.applyLogEntryCond.Wait()
+			rf.applyLogEntryMu.Unlock()
+			continue
 		}
 
-		rf.applyLogEntryAt = getNextApplyLogEntryTime()
 		rf.mu.Unlock()
 
 		// this channel may block, so we need to send applyMsg outside the
@@ -49,6 +49,9 @@ func (rf *Raft) applyLogEntryTicker() {
 		if applyMsg != nil {
 			rf.applyCh <- *applyMsg
 			log.Printf("%s%s applied log index: %v", logHeader, instState, applyMsg.CommandIndex)
+			log.Printf("%s%.3f seconds passed since last applied", logHeader, time.Since(lastRound).Seconds())
+			lastRound = time.Now()
 		}
+
 	}
 }

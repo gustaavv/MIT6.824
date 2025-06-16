@@ -69,7 +69,7 @@ func (ck *Clerk) doRequest(key string, value string, op string, xid int, count i
 			reply := new(KVReply)
 			ok := server.Call("KVServer.HandleRequest", args, reply)
 
-			logHeader := fmt.Sprintf("ck %d: xid %d: tid %d: count %d: ", ck.cid, xid, args.Tid, count)
+			logHeader := fmt.Sprintf("ck %d: xid %d: tid %d: count %d: srv %d: ", ck.cid, xid, args.Tid, count, i)
 
 			if !ok {
 				// TODO: ck.serverStatusArr[i].isLeader = false ?
@@ -91,9 +91,11 @@ func (ck *Clerk) doRequest(key string, value string, op string, xid int, count i
 				case MSG_OLD_XID:
 					log.Printf("%swarn: send request with old xid to leader", logHeader)
 				case MSG_MULTIPLE_XID:
-					log.Fatalf("%swrong use of client, you should send requests with one xid at a time", logHeader)
+					log.Printf("%swarn: wrong use of client, you should send requests with one xid at a time", logHeader)
 				case MSG_OP_UNSUPPORTED:
 					log.Fatalf("%sunsupported operation %s", logHeader, args.Op)
+				case MSG_INIT:
+					log.Printf("%sserver is initing, not accepting requests", logHeader)
 				}
 			}
 		}()
@@ -104,6 +106,8 @@ func (ck *Clerk) doRequest(key string, value string, op string, xid int, count i
 		return v
 	case <-timeout:
 		log.Printf("%stimeout, resend requests", logHeader)
+		// TODO: maybe not need to reset
+		ck.resetPossibleLeaders()
 		return ck.doRequest(key, value, op, xid, count+1) // TODO: set max retries?
 	}
 }

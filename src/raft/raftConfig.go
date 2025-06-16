@@ -15,8 +15,6 @@ const STATE_CANDIDATE = "candidate"
 
 const TICKER_FREQUENCY = time.Millisecond * 1
 
-const APPLY_LOGENTRY_FREQUENCY = time.Millisecond * 1
-
 const SUCCESSIVE_CONFLICT_OFFSET = 3
 
 const LOG_BT_ORIGINAL = "Original"
@@ -39,8 +37,8 @@ const ENABLE_DEBUG_FAST_FAIL = false
 
 /////////////////////////// follower parameters ///////////////////////////////
 
-const ELECTION_TIMEOUT_MIN_TIME_MS = 500
-const ELECTION_TIMEOUT_MAX_TIME_MS = 1000
+const ELECTION_TIMEOUT_MIN_TIME_MS = 330
+const ELECTION_TIMEOUT_MAX_TIME_MS = 650
 
 /////////////////////////// leader parameters /////////////////////////////////
 

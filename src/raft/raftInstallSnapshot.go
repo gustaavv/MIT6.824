@@ -61,6 +61,10 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	rf.SnapShot = newSnapshot
 	log.Printf("%snew snapshot created: LastIndex: %d, LastTerm: %d, Id: %d",
 		logHeader, index, newSnapshot.LastIncludedTerm, newSnapshot.Id)
+
+	rf.applyLogEntryMu.Lock()
+	rf.applyLogEntryCond.Broadcast()
+	rf.applyLogEntryMu.Unlock()
 }
 
 type InstallSnapshotArgs struct {
@@ -220,6 +224,10 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 
 			rf.persist()
 
+			rf.applyLogEntryMu.Lock()
+			rf.applyLogEntryCond.Broadcast()
+			rf.applyLogEntryMu.Unlock()
+
 			return false
 		}
 
@@ -236,8 +244,13 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 		// update other states
 		rf.commitIndex = lastIncludedIndex
 		rf.lastApplied = lastIncludedIndex
+		rf.lastAppliedPersist = lastIncludedIndex
 
 		rf.persist()
+
+		rf.applyLogEntryMu.Lock()
+		rf.applyLogEntryCond.Broadcast()
+		rf.applyLogEntryMu.Unlock()
 
 		// #8 reset state machine
 		return true

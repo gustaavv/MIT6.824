@@ -95,16 +95,27 @@ type Raft struct {
 	electionTimeoutAt        time.Time // for election timeout cronjob
 	heartbeatAt              time.Time // for heartbeat cronjob
 	lastNewEntryIndex        int       // see Figure 2 | AE RPC | Receiver #5, index of last new entry
-	applyLogEntryAt          time.Time // for apply log entry cronjob
-	firstLogIndexCurrentTerm int       // see Figure 2 | Rules for servers | Leaders last rule
-	successiveLogConflict    []int     // for LOG_BT_BIN_EXP
-	enableSnapshot           bool      // for lab3
+	applyLogEntryMu          sync.Mutex
+	applyLogEntryCond        *sync.Cond
+	firstLogIndexCurrentTerm int   // see Figure 2 | Rules for servers | Leaders last rule
+	successiveLogConflict    []int // for LOG_BT_BIN_EXP
+	enableSnapshot           bool  // for lab3
+
+	// persistent
+
+	lastAppliedPersist int
 }
 
 func (rf *Raft) SetEnableSnapshot(enableSnapshot bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	rf.enableSnapshot = enableSnapshot
+}
+
+func (rf *Raft) GetLastAppliedPersist() int {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	return rf.lastAppliedPersist
 }
 
 func (rf *Raft) getDataSummary() string {
@@ -197,6 +208,9 @@ func (rf *Raft) persist() {
 	if err := e.Encode(rf.log); err != nil {
 		log.Fatalf("inst %d: persist log err: %v", rf.me, err)
 	}
+	if err := e.Encode(rf.lastAppliedPersist); err != nil {
+		log.Fatalf("inst %d: persist log err: %v", rf.me, err)
+	}
 	stateData := w.Bytes()
 
 	snapshotData := make([]byte, 0)
@@ -221,9 +235,6 @@ func (rf *Raft) readPersist(stateData []byte, snapshotData []byte) {
 	if stateData == nil || len(stateData) < 1 { // bootstrap without any state?
 		return
 	}
-	if snapshotData == nil || len(snapshotData) < 1 {
-		return
-	}
 	// Your code here (2C).
 	// Example:
 	// r := bytes.NewBuffer(data)
@@ -246,15 +257,25 @@ func (rf *Raft) readPersist(stateData []byte, snapshotData []byte) {
 	var currentTerm int
 	var votedFor int
 	var raftLog raftLog
+	var lastAppliedPersist int
 
 	if d.Decode(&currentTerm) != nil ||
 		d.Decode(&votedFor) != nil ||
-		d.Decode(&raftLog) != nil {
+		d.Decode(&raftLog) != nil ||
+		d.Decode(&lastAppliedPersist) != nil {
 		log.Fatalf("%serror happens when decoding", logHeader)
 	} else {
 		rf.currentTerm = currentTerm
 		rf.votedFor = votedFor
 		rf.log = raftLog
+		rf.lastAppliedPersist = lastAppliedPersist
+	}
+
+	if snapshotData == nil || len(snapshotData) < 1 {
+		log.Printf("%srestore (1) state: currentTerm: %d, votedFor: %d (2) no snapshot restored",
+			logHeader, rf.currentTerm, votedFor,
+		)
+		return
 	}
 
 	r = bytes.NewBuffer(snapshotData)
@@ -345,7 +366,7 @@ func (rf *Raft) checkStatusTicker() {
 	for rf.killed() == false {
 		time.Sleep(time.Second)
 		rf.mu.Lock()
-		log.Printf("%sno dead lock", logHeader)
+		log.Printf("%s%s no dead lock", logHeader, rf.state)
 		rf.mu.Unlock()
 	}
 }
@@ -401,10 +422,10 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.electionTimeoutAt = getNextElectionTimeout()
 	rf.heartbeatAt = time.Now()
 	rf.lastNewEntryIndex = -1
-	rf.applyLogEntryAt = getNextApplyLogEntryTime()
 	rf.firstLogIndexCurrentTerm = 0
 	rf.successiveLogConflict = make([]int, len(rf.peers))
 	rf.enableSnapshot = true
+	rf.applyLogEntryCond = sync.NewCond(&rf.applyLogEntryMu)
 
 	// initialize from state persisted and snapshot before a crash
 	// if there is no persist data before, no field of rf will be changed

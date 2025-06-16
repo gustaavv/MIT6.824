@@ -1,5 +1,6 @@
 package kvraft
 
+import "log"
 import "6.824/porcupine"
 import "6.824/models"
 import "testing"
@@ -17,6 +18,12 @@ import "io/ioutil"
 const electionTimeout = 1 * time.Second
 
 const linearizabilityCheckTimeout = 1 * time.Second
+
+func out(s string) {
+	if ENABLE_TEST_VERBOSE {
+		log.Println(s)
+	}
+}
 
 type OpLog struct {
 	operations []porcupine.Operation
@@ -135,7 +142,7 @@ func checkClntAppends(t *testing.T, clnt int, v string, count int) {
 		wanted := "x " + strconv.Itoa(clnt) + " " + strconv.Itoa(j) + " y"
 		off := strings.Index(v, wanted)
 		if off < 0 {
-			t.Fatalf("%v missing element %q in Append result %q", clnt, wanted, v)
+			t.Fatalf("ck %v missing element %q in Append result %q", clnt, wanted, v)
 		}
 		off1 := strings.LastIndex(v, wanted)
 		if off1 != off {
@@ -317,6 +324,7 @@ func GenericTest(t *testing.T, part string, nclients int, nservers int, unreliab
 			for i := 0; i < nservers; i++ {
 				cfg.ShutdownServer(i)
 			}
+			out("shutdown all servers")
 			// Wait for a while for servers to shutdown, since
 			// shutdown isn't a real crash and isn't instantaneous
 			time.Sleep(electionTimeout)
@@ -325,7 +333,9 @@ func GenericTest(t *testing.T, part string, nclients int, nservers int, unreliab
 			for i := 0; i < nservers; i++ {
 				cfg.StartServer(i)
 			}
+			out("restart all servers")
 			cfg.ConnectAll()
+			out("connect all servers")
 		}
 
 		// log.Printf("wait for clients\n")
