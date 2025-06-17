@@ -7,10 +7,9 @@ on:
         description: "The subfolder to enter before running the test"
         required: true
         type: choice
-        default: kvraft
         options:
-          - raft
           - kvraft
+          - raft
       testcase:
         description: "Testcase name"
         required: true
