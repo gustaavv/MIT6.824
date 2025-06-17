@@ -99,3 +99,8 @@ Lab 3A requires us to turn off the snapshot feature. However, I found my impleme
 ### Optimization
 
 Never do premature optimization, which, in most of the time, is the piece of code causing bugs. Although I know this rule, when I do system design, I tend to fall into this mindset of mixing achieving basic functionality and do optimization.
+
+
+### Miscellaneous
+
+I sometimes met with this error: `race: limit on 8128 simultaneously alive goroutines is exceeded, dying`. The error comes from the race detector, so I guess I can leave it there.
