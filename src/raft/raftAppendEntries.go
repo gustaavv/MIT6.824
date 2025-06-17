@@ -355,7 +355,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 }
 
 func getNextHeartbeatTime() time.Time {
-	return time.Now().Add(HEARTBEAT_FERQUENCY)
+	return time.Now().Add(HEARTBEAT_FREQUENCY)
 }
 
 // This function must be called in the critical section

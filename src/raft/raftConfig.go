@@ -42,8 +42,11 @@ const ELECTION_TIMEOUT_MAX_TIME_MS = 650
 
 /////////////////////////// leader parameters /////////////////////////////////
 
-// "the tester limits you to 10 heartbeats per second"
-const HEARTBEAT_FERQUENCY = time.Millisecond * 107
+// HEARTBEAT_FREQUENCY "the tester limits you to 10 heartbeats per second"
+const HEARTBEAT_FREQUENCY = time.Millisecond * 107
+
+// ENABLE_START_SEND_AE whether the leader will send AE RPC immediately when Start() is called
+const ENABLE_START_SEND_AE = true
 
 const AE_CONFLICT_RETRIES = 5
 

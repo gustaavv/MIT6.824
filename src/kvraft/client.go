@@ -32,31 +32,8 @@ type Clerk struct {
 	serverStatus            []*ServerStatusReply
 	lastQueryServerStatusAt time.Time
 	allLeaderIndex          []int // see getPossibleLeaders
-}
 
-func (ck *Clerk) setRespCache(xid int, value string) {
-	ck.mu.Lock()
-	defer ck.mu.Unlock()
-	ck.respCache[xid] = value
-}
-
-func (ck *Clerk) getRespCache(xid int) (value string, existed bool) {
-	ck.mu.Lock()
-	defer ck.mu.Unlock()
-	value, existed = ck.respCache[xid]
-	return
-}
-
-func (ck *Clerk) setLastXid(xid int) {
-	ck.mu.Lock()
-	defer ck.mu.Unlock()
-	ck.lastXid = max(xid, ck.lastXid)
-}
-
-func (ck *Clerk) getLastXid() int {
-	ck.mu.Lock()
-	defer ck.mu.Unlock()
-	return ck.lastXid
+	lastTrimCacheAt time.Time
 }
 
 func (ck *Clerk) Kill() {
@@ -88,9 +65,12 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 		ck.allLeaderIndex[i] = i
 	}
 
+	ck.lastTrimCacheAt = getNextTrimCacheAt()
+
 	go ck.queryAllServerStatus()
 
 	go ck.queryServerStatusTicker()
+	go ck.TrimCacheTicker()
 
 	return ck
 }
@@ -107,7 +87,7 @@ func (ck *Clerk) doRequest(key string, value string, op string, xid int, count i
 		if existed {
 			return resp
 		} else {
-			log.Fatalf("%slastXid %d, but its resp not existed in cache", logHeader, lastXid)
+			log.Fatalf("%sresp not existed in cache (lastXid %d, maybe the cache item is deleted)", logHeader, lastXid)
 		}
 	}
 

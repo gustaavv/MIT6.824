@@ -316,13 +316,14 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	log.Printf("inst %d: Start: leader appends a new log entry (index %d) at term %d",
 		rf.me, index, rf.currentTerm)
 
-	// send AE RPC immediately. Create a new goroutine to send.
-	go func() {
-		rf.mu.Lock()
-		rf.sendHeartbeats()
-		rf.heartbeatAt = getNextHeartbeatTime()
-		defer rf.mu.Unlock()
-	}()
+	if ENABLE_START_SEND_AE {
+		go func() {
+			rf.mu.Lock()
+			rf.sendHeartbeats()
+			rf.heartbeatAt = getNextHeartbeatTime()
+			defer rf.mu.Unlock()
+		}()
+	}
 
 	return index, term, isLeader
 }
