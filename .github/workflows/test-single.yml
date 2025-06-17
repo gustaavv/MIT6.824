@@ -10,11 +10,13 @@ on:
         default: raft
         options:
           - raft
+          - kvraft
       testcase:
         description: "Testcase name"
         required: true
         type: choice
         options:
+          - 3A
           - TestFigure8Unreliable2C
           - TestBackup2B
       round:
