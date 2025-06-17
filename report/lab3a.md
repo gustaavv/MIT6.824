@@ -103,7 +103,7 @@ Never do premature optimization, which, in most of the time, is the piece of cod
 
 ### Goroutine leak
 
-I sometimes met with this error: `race: limit on 8128 simultaneously alive goroutines is exceeded, dying` on my own server, but it always appeared on GitHub actions, which means something must go wrong.
+I sometimes met with this error: `race: limit on 8128 simultaneously alive goroutines is exceeded, dying` on my own server, but it always appeared on GitHub Actions, which means something must go wrong.
 
 > If there is any useless goroutine which doesn't terminate, then a goroutine leak happens. The name is taken from "memory leak".
 
