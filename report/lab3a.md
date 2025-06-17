@@ -101,6 +101,14 @@ Lab 3A requires us to turn off the snapshot feature. However, I found my impleme
 Never do premature optimization, which, in most of the time, is the piece of code causing bugs. Although I know this rule, when I do system design, I tend to fall into this mindset of mixing achieving basic functionality and do optimization.
 
 
-### Miscellaneous
+### Goroutine leak
 
-I sometimes met with this error: `race: limit on 8128 simultaneously alive goroutines is exceeded, dying`. The error comes from the race detector, so I guess I can leave it there.
+I sometimes met with this error: `race: limit on 8128 simultaneously alive goroutines is exceeded, dying` on my own server, but it always appeared on GitHub actions, which means something must go wrong.
+
+> If there is any useless goroutine which doesn't terminate, then a goroutine leak happens. The name is taken from "memory leak".
+
+There are 2 places need fixing:
+
+1️⃣ Since we add tickers to a clerk, we need to call `Kill()` on a clerk after our task is finished to stop the ticker goroutines. The tester does not do this, so we need to modify `config.go` and `test_test.go`.
+
+2️⃣ There are constantly many handler goroutines waiting on the client sessions' `cond`. After the server is killed, we need to shut these down too.
