@@ -38,6 +38,7 @@ type Clerk struct {
 
 func (ck *Clerk) Kill() {
 	atomic.StoreInt32(&ck.dead, 1)
+	log.Printf("ck %d: shutting down...", ck.cid)
 }
 
 func (ck *Clerk) killed() bool {
@@ -71,6 +72,8 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 
 	go ck.queryServerStatusTicker()
 	go ck.TrimCacheTicker()
+
+	log.Printf("ck %d: start", ck.cid)
 
 	return ck
 }
@@ -135,6 +138,9 @@ func (ck *Clerk) doRequest(key string, value string, op string, xid int, count i
 					ck.setServerStatus(i, args.Tid, true)
 				case MSG_OP_UNSUPPORTED:
 					log.Fatalf("%sunsupported operation %s", logHeader, args.Op)
+				case MSG_SHUTDOWN:
+					log.Printf("%sserver is shutting down", logHeader)
+					ck.setServerStatus(i, args.Tid, false)
 				}
 			}
 		}()

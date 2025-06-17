@@ -54,3 +54,13 @@ func (s *session) getClientSession(cid int) *clientSession {
 	}
 	return c
 }
+
+func (s *session) broadcastAllClientSessions() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, cs := range s.clientSessionMap {
+		cs.condMu.Lock()
+		cs.cond.Broadcast()
+		cs.condMu.Unlock()
+	}
+}

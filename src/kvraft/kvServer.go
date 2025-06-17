@@ -42,7 +42,10 @@ func (kv *KVServer) Kill() {
 	atomic.StoreInt32(&kv.dead, 1)
 	kv.rf.Kill()
 	// Your code here, if desired.
-	//close(kv.applyCh)
+
+	log.Printf("srv %d: shutting down...", kv.me)
+	kv.session.broadcastAllClientSessions()
+	log.Printf("srv %d: shutting down all handler goroutines", kv.me)
 }
 
 func (kv *KVServer) killed() bool {
@@ -101,6 +104,12 @@ func (kv *KVServer) HandleRequest(args *KVArgs, reply *KVReply) {
 		log.Printf("%s%s %s", logHeader, args.String(), reply.String())
 	}()
 
+	if kv.killed() {
+		reply.Success = false
+		reply.Msg = MSG_SHUTDOWN
+		return
+	}
+
 	_, isLeader := kv.rf.GetState()
 	if !isLeader {
 		reply.Success = false
@@ -150,11 +159,17 @@ func (kv *KVServer) HandleRequest(args *KVArgs, reply *KVReply) {
 
 	// wait until the request has been handled
 	cs.condMu.Lock()
-	for lastXid < args.Xid {
+	for lastXid < args.Xid && !kv.killed() {
 		cs.cond.Wait()
 		lastXid, lastResp = cs.getLastXidAndResp()
 	}
 	cs.condMu.Unlock()
+
+	if kv.killed() {
+		reply.Success = false
+		reply.Msg = MSG_SHUTDOWN
+		return
+	}
 
 	if lastXid == args.Xid {
 		*reply = lastResp

@@ -224,6 +224,7 @@ func (cfg *config) deleteClient(ck *Clerk) {
 		os.Remove(v[i])
 	}
 	delete(cfg.clerks, ck)
+	ck.Kill()
 }
 
 // caller should hold cfg.mu
