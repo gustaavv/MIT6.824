@@ -40,7 +40,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    name: Run ${{ github.event.inputs.testcase }} for ${{ github.event.inputs.round }} round
+    name: Run ${{ github.event.inputs.testcase }} for ${{ github.event.inputs.round }} rounds
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
