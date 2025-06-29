@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
@@ -40,6 +41,8 @@ const ENABLE_TRACE_ID = false
 const ENABLE_SNAPSHOT_ID = false
 
 const ENABLE_DEBUG_FAST_FAIL = false
+
+const GOROUTINE_NUM_LOG_FILENAME = "goroutine_num_xxafbnlassfb.log"
 
 /////////////////////////// follower parameters ///////////////////////////////
 
@@ -110,10 +113,25 @@ func startCheckGoroutineNumTicker() {
 	}
 	cgntInited = true
 	log.Printf("start CheckGoroutineNumTicker")
+
+	if err := os.Remove(GOROUTINE_NUM_LOG_FILENAME); err != nil {
+		log.Printf("Failed to remove old log file: %v", err)
+	}
+
+	file, err := os.Create(GOROUTINE_NUM_LOG_FILENAME)
+	if err != nil {
+		fmt.Printf("Failed to create log file: %v", err)
+		return
+	}
+
 	go func() {
 		for {
-			time.Sleep(time.Second * 3)
-			log.Printf("Current Goroutine Num: %d", runtime.NumGoroutine())
+			time.Sleep(time.Second * 1)
+			num := runtime.NumGoroutine()
+			log.Printf("Current Goroutine Num: %d", num)
+			if _, err := file.WriteString(fmt.Sprintf("%d\n", num)); err != nil {
+				fmt.Printf("Failed to write to log file: %v", err)
+			}
 		}
 	}()
 }

@@ -59,6 +59,7 @@ jobs:
             rm -f app.log
             time go test -run ${{ github.event.inputs.testcase }} -race
             if [ $? -ne 0 ]; then
+              echo "Max goroutine num during execution: `sort -nr goroutine_num_xxafbnlassfb.log | head -n 1`"
               echo "Test failed in round $i. Exiting loop."
               exit 1
             fi

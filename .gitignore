@@ -6,3 +6,4 @@ api.key
 src/main/mr-*
 commands
 app.log
+goroutine_num_xxafbnlassfb.log
