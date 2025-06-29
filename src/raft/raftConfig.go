@@ -28,7 +28,7 @@ const LOG_BT_AGGRESSIVE = "Super Aggressive"
 const LOG_BACKTRACKING_MODE = LOG_BT_BIN_EXP
 
 // ENABLE_LOG turn this flag off when testing for performance
-const ENABLE_LOG = true
+const ENABLE_LOG = false
 
 // LOG_TO_FILE log to file or console
 const LOG_TO_FILE = true
