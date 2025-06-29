@@ -99,8 +99,12 @@ type Raft struct {
 	applyLogEntryCond        *sync.Cond
 	firstLogIndexCurrentTerm int   // see Figure 2 | Rules for servers | Leaders last rule
 	successiveLogConflict    []int // for LOG_BT_BIN_EXP
-	enableSnapshot           bool  // for lab3
 
+	// for lab3
+
+	enableSnapshot bool
+	persisterMu    sync.Mutex
+	persisterCond  *sync.Cond
 }
 
 func (rf *Raft) SetEnableSnapshot(enableSnapshot bool) {
@@ -110,6 +114,9 @@ func (rf *Raft) SetEnableSnapshot(enableSnapshot bool) {
 }
 
 func (rf *Raft) getDataSummary() string {
+	if !ENABLE_LOG {
+		return "<DATA_SUMMARY>"
+	}
 	var ans = fmt.Sprintf("data summary: snapshot lastIncludedIndex %d, lastIncludedTerm %d. log len %d",
 		rf.SnapShot.LastIncludedIndex, rf.SnapShot.LastIncludedTerm, rf.log.size())
 
@@ -172,24 +179,26 @@ func (rf *Raft) GetState() (int, bool) {
 	return term, isLeader
 }
 
+func (rf *Raft) PersisterCondWait() {
+	rf.persisterMu.Lock()
+	rf.persisterCond.Wait()
+	rf.persisterMu.Unlock()
+}
+
+func (rf *Raft) PersisterCondBroadcast() {
+	rf.persisterMu.Lock()
+	rf.persisterCond.Broadcast()
+	rf.persisterMu.Unlock()
+}
+
 //
 // save Raft's persistent state to stable storage,
 // where it can later be retrieved after a crash and restart.
 // see paper's Figure 2 for a description of what should be persistent.
 // This function must be called in a critical section
 //
-func (rf *Raft) persist() {
-	// TODO: add parameters for a more granular persist to improve performance
-
-	// Your code here (2C).
-	// Example:
-	// w := new(bytes.Buffer)
-	// e := labgob.NewEncoder(w)
-	// e.Encode(rf.xxx)
-	// e.Encode(rf.yyy)
-	// data := w.Bytes()
-	// rf.persister.SaveRaftState(data)
-
+func (rf *Raft) persist(persistSnapshot bool) {
+	// persist state
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)
 	if err := e.Encode(rf.currentTerm); err != nil {
@@ -203,19 +212,24 @@ func (rf *Raft) persist() {
 	}
 	stateData := w.Bytes()
 
+	// persist snapshot
 	snapshotData := make([]byte, 0)
-
-	if rf.enableSnapshot {
-		w = new(bytes.Buffer)
-		e = labgob.NewEncoder(w)
+	if persistSnapshot && rf.enableSnapshot {
+		w := new(bytes.Buffer)
+		e := labgob.NewEncoder(w)
 		if err := e.Encode(rf.SnapShot); err != nil {
 			log.Fatalf("inst %d: persist log err: %v", rf.me, err)
 		}
 		snapshotData = w.Bytes()
 	}
 
-	rf.persister.SaveStateAndSnapshot(stateData, snapshotData)
+	if persistSnapshot {
+		rf.persister.SaveStateAndSnapshot(stateData, snapshotData)
+	} else {
+		rf.persister.SaveRaftState(stateData)
+	}
 	//log.Printf("inst %d: persist log finished, data len: %d", rf.me, len(data))
+	rf.PersisterCondBroadcast()
 }
 
 //
@@ -312,7 +326,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	}
 
 	rf.log.append(LogEntry{Term: term, Command: command, Index: index})
-	rf.persist()
+	rf.persist(false)
 	log.Printf("inst %d: Start: leader appends a new log entry (index %d) at term %d",
 		rf.me, index, rf.currentTerm)
 
@@ -342,6 +356,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 func (rf *Raft) Kill() {
 	atomic.StoreInt32(&rf.dead, 1)
 	// Your code here, if desired.
+	log.Printf("inst %d: shutting down...", rf.me)
 }
 
 func (rf *Raft) killed() bool {
@@ -351,7 +366,7 @@ func (rf *Raft) killed() bool {
 
 func (rf *Raft) applyLogEntry() {
 	logHeader := fmt.Sprintf("inst %d: ticker2: ", rf.me)
-	lastRound := time.Now()
+	//lastRound := time.Now()
 	for rf.killed() == false {
 		//time.Sleep(APPLY_LOGENTRY_FREQUENCY)
 
@@ -392,8 +407,8 @@ func (rf *Raft) applyLogEntry() {
 		if applyMsg != nil {
 			rf.applyCh <- *applyMsg
 			log.Printf("%s%s applied log index: %v", logHeader, instState, applyMsg.CommandIndex)
-			log.Printf("%s%.3f seconds passed since last applied", logHeader, time.Since(lastRound).Seconds())
-			lastRound = time.Now()
+			//log.Printf("%s%.3f seconds passed since last applied", logHeader, time.Since(lastRound).Seconds())
+			//lastRound = time.Now()
 		}
 
 	}
@@ -429,6 +444,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.applyCh = applyCh
 	// Your initialization code here (2A, 2B, 2C).
 	configLog()
+	startCheckGoroutineNumTicker()
 	validateLogBacktrackingMode()
 
 	// states on Figure 2 ///////////////////////////////////
@@ -464,6 +480,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.successiveLogConflict = make([]int, len(rf.peers))
 	rf.enableSnapshot = true
 	rf.applyLogEntryCond = sync.NewCond(&rf.applyLogEntryMu)
+	rf.persisterCond = sync.NewCond(&rf.persisterMu)
 
 	// initialize from state persisted and snapshot before a crash
 	// if there is no persist data before, no field of rf will be changed

@@ -1,6 +1,7 @@
 package kvraft
 
 import (
+	"bytes"
 	"fmt"
 	"log"
 	"sync"
@@ -23,9 +24,21 @@ type KVServer struct {
 
 	// Your definitions here.
 
-	store   map[string]string
-	session session
-	startAt time.Time
+	persister          *raft.Persister
+	store              map[string]string
+	session            session
+	startAt            time.Time
+	lastConsumedIndex  int
+	lastReadSnapshotAt time.Time
+}
+
+func (kv *KVServer) getDataSummary() string {
+	if !raft.ENABLE_LOG {
+		return "<DATA_SUMMARY>"
+	}
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	return fmt.Sprintf("data summary: lastConsumedIndex: %d, %s", kv.lastConsumedIndex, kv.session.String())
 }
 
 // Kill
@@ -81,16 +94,19 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	if maxraftstate < 0 {
 		kv.rf.SetEnableSnapshot(false)
 	}
-	kv.startAt = time.Now()
-
-	// You may need initialization code here.
+	kv.persister = persister
 	kv.store = make(map[string]string)
 	kv.session.clientSessionMap = make(map[int]*clientSession)
+	kv.startAt = time.Now()
+
+	kv.installSnapshot(kv.rf.SnapShot.Data, kv.rf.SnapShot.LastIncludedIndex)
+
+	log.Printf("%sstarted, %s", logHeader, kv.getDataSummary())
 
 	go kv.consumeApplyCh()
 	go kv.checkLeaderTicker()
-
-	log.Printf("%s started", logHeader)
+	go kv.checkRaftStateSizeTicker()
+	go kv.checkStatusTicker()
 
 	return kv
 }
@@ -98,10 +114,27 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 func (kv *KVServer) HandleRequest(args *KVArgs, reply *KVReply) {
 	// Your code here.
 
+	start := time.Now()
+
 	logHeader := fmt.Sprintf("srv %d: ", kv.me)
-	log.Printf("%s%s", logHeader, args.String())
+	//log.Printf("%s%s", logHeader, args.String())
 	defer func() {
-		log.Printf("%s%s %s", logHeader, args.String(), reply.String())
+		_, isLeader := kv.rf.GetState()
+		if !isLeader {
+			reply.Success = false
+			reply.Msg = MSG_NOT_LEADER
+		} else if kv.maxraftstate > 0 {
+			kv.mu.Lock()
+			if start.Before(kv.lastReadSnapshotAt) {
+				reply.Success = false
+				reply.Msg = MSG_READ_SNAPSHOT
+			}
+			kv.mu.Unlock()
+		} else if kv.killed() {
+			reply.Success = false
+			reply.Msg = MSG_SHUTDOWN
+		}
+		log.Printf("%sleader handles %s %s", logHeader, args.String(), reply.String())
 	}()
 
 	if kv.killed() {
@@ -110,8 +143,7 @@ func (kv *KVServer) HandleRequest(args *KVArgs, reply *KVReply) {
 		return
 	}
 
-	_, isLeader := kv.rf.GetState()
-	if !isLeader {
+	if _, isLeader := kv.rf.GetState(); !isLeader {
 		reply.Success = false
 		reply.Msg = MSG_NOT_LEADER
 		return
@@ -136,21 +168,7 @@ func (kv *KVServer) HandleRequest(args *KVArgs, reply *KVReply) {
 		return
 	}
 
-	//_, isLeader := kv.rf.GetState()
-	//
-	//cs.mu.Lock()
-	//// avoid append duplicate log entries of the same xid
-	//if cs.lastSeenXid < args.Xid && isLeader {
-	//	_, _, isLeader2 := kv.rf.Start(*args)
-	//	isLeader = isLeader2
-	//	if isLeader {
-	//		cs.lastSeenXid = args.Xid
-	//	}
-	//}
-	//cs.mu.Unlock()
-
-	_, _, isLeader = kv.rf.Start(*args)
-
+	_, _, isLeader := kv.rf.Start(*args)
 	if !isLeader {
 		reply.Success = false
 		reply.Msg = MSG_NOT_LEADER
@@ -184,14 +202,36 @@ func (kv *KVServer) consumeApplyCh() {
 	for applyMsg := range kv.applyCh {
 		//start := time.Now()
 
-		//log.Printf("srv %d: consume applyMsg: %v", kv.me, applyMsg)
+		if kv.killed() {
+			return
+		}
+
+		if applyMsg.SnapshotValid {
+			if kv.rf.CondInstallSnapshot(applyMsg.SnapshotTerm, applyMsg.SnapshotIndex,
+				applyMsg.SnapshotId, applyMsg.Snapshot) {
+				kv.installSnapshot(applyMsg.Snapshot, applyMsg.SnapshotIndex)
+			}
+			continue
+		}
+
+		// this mutex is used to isolate this goroutine from checkRaftStateSizeTicker's goroutine
+		kv.mu.Lock()
+
+		if applyMsg.CommandIndex != kv.lastConsumedIndex+1 {
+			// this can happen only once after installing a snapshot
+			kv.mu.Unlock()
+			continue
+		}
+		kv.lastConsumedIndex = applyMsg.CommandIndex
+
 		if !applyMsg.CommandValid {
-			// TODO: snapshot in 3B
+			kv.mu.Unlock()
 			continue
 		}
 
 		// no-op
 		if applyMsg.Command == nil {
+			kv.mu.Unlock()
 			continue
 		}
 
@@ -223,7 +263,8 @@ func (kv *KVServer) consumeApplyCh() {
 			}
 
 			cs.setLastXidAndResp(args.Xid, reply)
-			log.Printf("%shandle %s succeeds, key %q, value %q", logHeader, args.Op, args.Key, logV(reply.Value))
+			log.Printf("%shandle %s succeeds, key %q, reqValue %q, respValue %q",
+				logHeader, args.Op, args.Key, args.Value, logV(reply.Value))
 		} else if lastXid > args.Xid {
 			log.Printf("%sWARN: lastXid %d > args.Xid %d", logHeader, lastXid, args.Xid)
 		}
@@ -233,6 +274,8 @@ func (kv *KVServer) consumeApplyCh() {
 		cs.condMu.Unlock()
 
 		//log.Printf("%stakes %.4f seconds", logHeader, time.Since(start).Seconds())
+
+		kv.mu.Unlock()
 	}
 }
 
@@ -249,5 +292,143 @@ func (kv *KVServer) checkLeaderTicker() {
 		}
 
 		isLeader = isLeader2
+	}
+}
+
+func (kv *KVServer) checkRaftStateSizeTicker() {
+	if kv.maxraftstate < 0 {
+		return
+	}
+
+	for !kv.killed() {
+		stateSize := kv.persister.RaftStateSize()
+		if stateSize < kv.maxraftstate*95/100 {
+			kv.rf.PersisterCondWait()
+			continue
+		}
+
+		kv.mu.Lock()
+
+		index := kv.lastConsumedIndex
+		snapshot := kv.takeSnapshot()
+		b := kv.rf.Snapshot(index, snapshot)
+
+		kv.mu.Unlock()
+		if b {
+			log.Printf("srv %d: take snapshot, index %d, stateSize: %d, maxraftstate: %d, md5: %s",
+				kv.me, index, stateSize, kv.maxraftstate, hashToMd5(snapshot))
+		}
+
+		time.Sleep(time.Millisecond * 10)
+	}
+}
+
+type ClientSessionTemp struct {
+	Cid      int
+	LastXid  int
+	LastResp KVReply
+}
+
+// This function must be called in a critical section
+func (kv *KVServer) takeSnapshot() []byte {
+	logHeader := fmt.Sprintf("srv %d: takeSnapshot: ", kv.me)
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+
+	if err := e.Encode(kv.store); err != nil {
+		log.Fatalf("%sencode kv.store err: %v", logHeader, err)
+	}
+
+	clientSessionList := make([]ClientSessionTemp, 0)
+	kv.session.mu.Lock()
+	for _, cs := range kv.session.clientSessionMap {
+		clientSessionList = append(clientSessionList, ClientSessionTemp{
+			Cid:     cs.cid,
+			LastXid: cs.lastXid,
+			LastResp: KVReply{
+				Success: cs.lastResp.Success,
+				Msg:     cs.lastResp.Msg,
+				Value:   cs.lastResp.Value,
+			},
+		})
+	}
+	kv.session.mu.Unlock()
+
+	if err := e.Encode(clientSessionList); err != nil {
+		log.Fatalf("%sencode kv.session err: %v", logHeader, err)
+	}
+	//log.Printf("%skv.store: %s\n\nkv.session: %s", logHeader, kv.store, kv.session.String())
+
+	ans := w.Bytes()
+	return ans
+}
+
+func (kv *KVServer) installSnapshot(snapshotData []byte, lastIncludedIndex int) {
+	if snapshotData == nil || len(snapshotData) < 1 { // bootstrap without any state?
+		return
+	}
+
+	if kv.maxraftstate < 0 {
+		return
+	}
+
+	logHeader := fmt.Sprintf("srv %d: installSnapshot: ", kv.me)
+	kv.mu.Lock()
+
+	if lastIncludedIndex < kv.lastConsumedIndex {
+		// must not install old snapshot
+		kv.mu.Unlock()
+		log.Printf("%snot installed: lastIncludedIndex %d < kv.lastConsumedIndex %d",
+			logHeader, lastIncludedIndex, kv.lastConsumedIndex)
+		return
+	}
+
+	defer kv.mu.Unlock()
+
+	r := bytes.NewBuffer(snapshotData)
+	d := labgob.NewDecoder(r)
+
+	var store map[string]string
+	var clientSessionList []ClientSessionTemp
+
+	if d.Decode(&store) != nil || d.Decode(&clientSessionList) != nil {
+		log.Fatalf("%serror happens when reading snapshot", logHeader)
+	} else {
+		kv.store = store
+
+		kv.session.mu.Lock()
+		kv.session.clientSessionMap = make(map[int]*clientSession)
+		for _, cst := range clientSessionList {
+			cs := makeClientSession(cst.Cid)
+			cs.lastXid = cst.LastXid
+			// don't know why this is wrong: cs.lastResp = &cst.LastResp
+			// maybe related to Go's memory model. just manually copy the fields
+			cs.lastResp = &KVReply{
+				Success: cst.LastResp.Success,
+				Msg:     cst.LastResp.Msg,
+				Value:   cst.LastResp.Value,
+			}
+			kv.session.clientSessionMap[cs.cid] = cs
+		}
+		kv.session.mu.Unlock()
+	}
+
+	kv.lastConsumedIndex = lastIncludedIndex
+	kv.lastReadSnapshotAt = time.Now()
+
+	log.Printf("%sinstalled: lastIncludedIndex %d, md5 %s",
+		logHeader, lastIncludedIndex, hashToMd5(snapshotData))
+}
+
+func (kv *KVServer) checkStatusTicker() {
+	for !kv.killed() {
+		time.Sleep(time.Second)
+
+		kv.mu.Lock()
+		kv.mu.Unlock()
+		kv.session.mu.Lock()
+		kv.session.mu.Unlock()
+
+		log.Printf("srv %d: check status: no deadlock", kv.me)
 	}
 }

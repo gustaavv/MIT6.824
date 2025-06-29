@@ -10,7 +10,9 @@ const TICKER_FREQUENCY_LARGE = 500 * time.Millisecond
 // ENABLE_LOG_VALUE value may be too large to log
 const ENABLE_LOG_VALUE = false
 
-const ENABLE_TEST_VERBOSE = true
+const ENABLE_MD5 = false
+
+const ENABLE_TEST_VERBOSE = false
 
 /////////////////////////// client parameters /////////////////////////////////
 

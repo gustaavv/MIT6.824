@@ -33,14 +33,12 @@ func (rl *raftLog) nextIndex() int {
 }
 
 func (rl *raftLog) checkValidIndex(index int) bool {
+	if rl.isEmpty() {
+		return false
+	}
 	firstIndex := rl.first().Index
 	lastIndex := rl.last().Index
-	ans := firstIndex <= index && index <= lastIndex
-	if !ans {
-		//log.Printf("index out of range: %d not in [%d, %d]", index, firstIndex, lastIndex)
-	}
-
-	return ans
+	return firstIndex <= index && index <= lastIndex
 }
 
 // return nil if index is out of range

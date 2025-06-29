@@ -1,8 +1,10 @@
 package raft
 
 import (
+	"io/ioutil"
 	"log"
 	"os"
+	"runtime"
 	"sync"
 	"time"
 )
@@ -25,6 +27,10 @@ const LOG_BT_AGGRESSIVE = "Super Aggressive"
 // choose one log backtracking mode above
 const LOG_BACKTRACKING_MODE = LOG_BT_BIN_EXP
 
+// ENABLE_LOG turn this flag off when testing for performance
+const ENABLE_LOG = true
+
+// LOG_TO_FILE log to file or console
 const LOG_TO_FILE = true
 
 const ENABLE_TEST_VERBOSE = false
@@ -62,6 +68,10 @@ func configLog() {
 		return
 	}
 	logInited = true
+	if !ENABLE_LOG {
+		log.SetOutput(ioutil.Discard)
+		return
+	}
 	log.SetFlags(log.Ltime | log.Lmicroseconds | log.Lshortfile)
 	if LOG_TO_FILE {
 		file, err := os.OpenFile("app.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
@@ -87,4 +97,23 @@ func validateLogBacktrackingMode() {
 	if LOG_BACKTRACKING_MODE == LOG_BT_TERM_BYPASS {
 		log.Fatalf("unfortunately, this mode is not supported after lab2c. You should switch to other mode")
 	}
+}
+
+var cgntLock sync.Mutex
+var cgntInited bool
+
+func startCheckGoroutineNumTicker() {
+	cgntLock.Lock()
+	defer cgntLock.Unlock()
+	if cgntInited {
+		return
+	}
+	cgntInited = true
+	log.Printf("start CheckGoroutineNumTicker")
+	go func() {
+		for {
+			time.Sleep(time.Second * 3)
+			log.Printf("Current Goroutine Num: %d", runtime.NumGoroutine())
+		}
+	}()
 }

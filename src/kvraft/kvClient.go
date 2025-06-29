@@ -141,6 +141,8 @@ func (ck *Clerk) doRequest(key string, value string, op string, xid int, count i
 				case MSG_SHUTDOWN:
 					log.Printf("%sserver is shutting down", logHeader)
 					ck.setServerStatus(i, args.Tid, false)
+				case MSG_READ_SNAPSHOT:
+					log.Printf("%sserver is reading snapshot", logHeader)
 				}
 			}
 		}()

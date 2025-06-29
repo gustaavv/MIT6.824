@@ -107,7 +107,7 @@ func (rf *Raft) sendAERequestAndHandleReply(peerIndex int, conflictRetries int) 
 		rf.votedFor = -1
 		rf.electionTimeoutAt = getNextElectionTimeout()
 		rf.state = STATE_FOLLOWER
-		rf.persist()
+		rf.persist(false)
 	}
 
 	if rf.state != STATE_LEADER { // only leader needs to handle AppendEntries RPC reply
@@ -213,7 +213,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	reply.TraceId = args.TraceId
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	defer rf.persist()
+	defer rf.persist(false)
 	logHeader := fmt.Sprintf("inst %d: AE Req: Trace: %d: ", rf.me, args.TraceId)
 
 	// #1
@@ -279,7 +279,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 
 	if len(args.Entries) > 0 && args.Entries[0].Index <= rf.SnapShot.LastIncludedIndex {
-		log.Fatalf("%sarg first entry index %d <= snapShot.LastIncludedIndex %d",
+		log.Printf("%swarn: arg first entry index %d <= snapShot.LastIncludedIndex %d",
 			logHeader, args.Entries[0].Index, rf.SnapShot.LastIncludedIndex)
 	}
 

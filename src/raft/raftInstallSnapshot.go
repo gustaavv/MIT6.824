@@ -17,54 +17,59 @@ type SnapShot struct {
 // all info up to and including index. this means the
 // service no longer needs the log through (and including)
 // that index. Raft should now trim its log as much as possible.
-func (rf *Raft) Snapshot(index int, snapshot []byte) {
+func (rf *Raft) Snapshot(index int, snapshot []byte) bool {
 	// Your code here (2D).
 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
 	if !rf.enableSnapshot {
-		return
+		return false
 	}
-
-	defer rf.persist()
 
 	logHeader := fmt.Sprintf("inst %d: snapshot: ", rf.me)
 
-	if !rf.log.checkValidIndex(index) {
-		log.Printf("%sindex out of range: %d not in [%d, %d]",
+	if !rf.log.isEmpty() && index < rf.log.first().Index-1 {
+		log.Printf("%ssnapshot lastIncludedIndex %d, log index range [%d, %d]",
 			logHeader, index, rf.log.first().Index, rf.log.last().Index)
-		return
+		return false
 	}
 	if rf.SnapShot.LastIncludedIndex >= index {
 		log.Printf("%sold snapshot index %d >= new snapshot index %d",
 			logHeader, rf.SnapShot.LastIncludedIndex, index)
-		return
+		return false
 	}
 	if rf.lastApplied < index {
 		log.Printf("%slastApplied %d < new snapshot index %d",
 			logHeader, rf.lastApplied, index)
-		return
+		return false
 	}
 
+	// save the snapshot first
 	newSnapshot := SnapShot{
 		Data:              snapshot,
 		LastIncludedIndex: index,
 		LastIncludedTerm:  rf.log.get(index).Term,
 		Id:                getNextSnapshotId(),
 	}
+	rf.SnapShot = newSnapshot
+	rf.persist(true)
+
+	// then save the state
 	newLogEntries := rf.log.getRangeStartFrom(index + 1)
 	// make a new slice so that the original one can be GCed
 	newLogEntriesCopy := make([]LogEntry, len(newLogEntries))
 	copy(newLogEntriesCopy, newLogEntries)
 	rf.log.Entries = newLogEntriesCopy
-	rf.SnapShot = newSnapshot
-	log.Printf("%snew snapshot created: LastIndex: %d, LastTerm: %d, Id: %d",
-		logHeader, index, newSnapshot.LastIncludedTerm, newSnapshot.Id)
+	log.Printf("%snew snapshot created: LastIndex: %d, LastTerm: %d, Id: %d, bytes: %d",
+		logHeader, index, newSnapshot.LastIncludedTerm, newSnapshot.Id, len(newSnapshot.Data))
+	rf.persist(false)
 
 	rf.applyLogEntryMu.Lock()
 	rf.applyLogEntryCond.Broadcast()
 	rf.applyLogEntryMu.Unlock()
+
+	return true
 }
 
 type InstallSnapshotArgs struct {
@@ -130,7 +135,7 @@ func (rf *Raft) sendISRequestAndHandleReply(peerIndex int) {
 		rf.votedFor = -1
 		rf.electionTimeoutAt = getNextElectionTimeout()
 		rf.state = STATE_FOLLOWER
-		rf.persist()
+		rf.persist(false)
 		return
 	}
 
@@ -167,7 +172,7 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		rf.currentTerm = args.Term
 		rf.votedFor = -1
 		rf.state = STATE_FOLLOWER
-		rf.persist()
+		rf.persist(false)
 	}
 
 	// #2 - #5 passed
@@ -212,17 +217,20 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 		} else if rf.SnapShot.LastIncludedIndex < lastIncludedIndex { // only keep the latest snapshot
 			log.Printf("%skeep state: old lastIncludedIndex %d <= new lastIncludedIndex %d",
 				logHeader, rf.SnapShot.LastIncludedIndex, lastIncludedIndex)
+
+			// save the snapshot first
+			rf.SnapShot.LastIncludedIndex = lastIncludedIndex
+			rf.SnapShot.LastIncludedTerm = lastIncludedTerm
+			rf.SnapShot.Data = snapshot
+			rf.persist(true)
+
+			// then save the state
 			// trim logs entries before LastIncludedIndex(including)
 			// i.e., retain log entries after LastIncludedIndex
 			newLogEntries := rf.log.getRangeStartFrom(lastIncludedIndex + 1)
 			rf.log.Entries = make([]LogEntry, len(newLogEntries))
 			copy(rf.log.Entries, newLogEntries)
-			// save the snapshot
-			rf.SnapShot.LastIncludedIndex = lastIncludedIndex
-			rf.SnapShot.LastIncludedTerm = lastIncludedTerm
-			rf.SnapShot.Data = snapshot
-
-			rf.persist()
+			rf.persist(false)
 
 			rf.applyLogEntryMu.Lock()
 			rf.applyLogEntryCond.Broadcast()
@@ -245,7 +253,7 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 		rf.commitIndex = lastIncludedIndex
 		rf.lastApplied = lastIncludedIndex
 
-		rf.persist()
+		rf.persist(true)
 
 		rf.applyLogEntryMu.Lock()
 		rf.applyLogEntryCond.Broadcast()

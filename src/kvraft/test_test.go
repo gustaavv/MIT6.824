@@ -291,7 +291,7 @@ func GenericTest(t *testing.T, part string, nclients int, nservers int, unreliab
 					v := Get(cfg, myck, key, opLog, cli)
 					// the following check only makes sense when we're not using random keys
 					if !randomkeys && v != last {
-						t.Fatalf("get wrong value, key %q, wanted:\n%q\n, got\n%q\n", key, last, v)
+						t.Fatalf("get wrong value at %v, key %q, wanted:\n%q\n, got\n%q\n", time.Now(), key, last, v)
 					}
 				}
 			}

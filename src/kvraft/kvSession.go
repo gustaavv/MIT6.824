@@ -1,6 +1,11 @@
 package kvraft
 
-import "sync"
+import (
+	"fmt"
+	"sort"
+	"strings"
+	"sync"
+)
 
 type clientSession struct {
 	mu       sync.Mutex
@@ -9,6 +14,12 @@ type clientSession struct {
 	lastResp *KVReply
 	condMu   sync.Mutex
 	cond     *sync.Cond
+}
+
+func (cs *clientSession) String() string {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	return fmt.Sprintf("CS{cid: %d, lastXid: %d, lastRespValue: %q}", cs.cid, cs.lastXid, logV(cs.lastResp.Value))
 }
 
 func (cs *clientSession) getLastXidAndResp() (lastXid int, lastResp KVReply) {
@@ -41,6 +52,26 @@ type session struct {
 	mu sync.Mutex
 	// id -> clientSession
 	clientSessionMap map[int]*clientSession
+}
+
+func (s *session) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Session{csNum: %d, csMap: {", len(s.clientSessionMap)))
+	csList := make([]*clientSession, 0)
+	for _, cs := range s.clientSessionMap {
+		csList = append(csList, cs)
+	}
+	sort.Slice(csList, func(i, j int) bool {
+		return csList[i].cid < csList[j].cid
+	})
+	for _, cs := range csList {
+		sb.WriteString(cs.String())
+		sb.WriteString(", ")
+	}
+	sb.WriteString("}}")
+	return sb.String()
 }
 
 // create a new one if it does not exist

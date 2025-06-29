@@ -28,6 +28,10 @@ jobs:
             command: cd src/raft && time go test -race
           - name: Lab 3A
             command: cd src/kvraft && time go test -run 3A -race
+          - name: Lab 3B
+            command: cd src/kvraft && time go test -run 3B -race
+          - name: Lab 3
+            command: cd src/kvraft && time go test -race
 
       fail-fast: false
 
