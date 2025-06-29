@@ -51,7 +51,6 @@ jobs:
           go-version: 1.15
 
       - name: Run tests
-        continue-on-error: true
         run: |
           cd src/${{ github.event.inputs.subfolder }}
           for i in {1..${{ github.event.inputs.round }}}
@@ -63,7 +62,7 @@ jobs:
             echo "Max goroutine num during execution: `sort -nr goroutine_num_xxafbnlassfb.log | head -n 1`"
             if [ $ret -ne 0 ]; then
               echo "Test failed in round $i. Exiting loop."
-              exit 1
+              exit 1123
             fi
             sleep 1
           done
