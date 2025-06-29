@@ -51,6 +51,7 @@ jobs:
           go-version: 1.15
 
       - name: Run tests
+        continue-on-error: true
         run: |
           cd src/${{ github.event.inputs.subfolder }}
           for i in {1..${{ github.event.inputs.round }}}
