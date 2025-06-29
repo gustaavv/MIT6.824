@@ -15,6 +15,7 @@ on:
         required: true
         type: choice
         options:
+          - Run All
           - 3A
           - TestFigure8Unreliable2C
           - TestBackup2B
@@ -59,10 +60,16 @@ jobs:
           do
             echo "Round $i:"
             rm -f app.log
-            time go test -run ${{ github.event.inputs.testcase }} -race
+
+            if [ "${{ github.event.inputs.testcase }}" = "Run All" ]; then
+              time go test -race
+            else
+              time go test -run ${{ github.event.inputs.testcase }} -race
+            fi
+
             ret=$?
+            echo "Max goroutine num during execution: `sort -nr goroutine_num_xxafbnlassfb.log | head -n 1`"
             if [ $ret -ne 0 ]; then
-              echo "Max goroutine num during execution: `sort -nr goroutine_num_xxafbnlassfb.log | head -n 1`"
               echo "Test failed in round $i. Exiting loop."
               exit 1123
             fi
