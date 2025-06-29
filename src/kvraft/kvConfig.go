@@ -17,7 +17,7 @@ const ENABLE_TEST_VERBOSE = false
 /////////////////////////// client parameters /////////////////////////////////
 
 const ENABLE_QUERY_SERVER_STATUS = true
-const QUERY_SERVER_STATUS_FREQUENCY = 200 * time.Millisecond
+const QUERY_SERVER_STATUS_FREQUENCY = 300 * time.Millisecond
 
 const REQUEST_TIMEOUT = 300 * time.Millisecond
 

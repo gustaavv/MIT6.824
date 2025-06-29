@@ -54,6 +54,7 @@ jobs:
       - name: Run tests
         shell: bash
         run: |
+          # https://stackoverflow.com/a/78924711
           set +e
           cd src/${{ github.event.inputs.subfolder }}
           for i in {1..${{ github.event.inputs.round }}}

@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+//import _ "net/http/pprof"
+
 /////////////////////////// shared parameters /////////////////////////////////
 
 const STATE_FOLLOWER = "follower"
@@ -41,6 +43,8 @@ const ENABLE_TRACE_ID = false
 const ENABLE_SNAPSHOT_ID = false
 
 const ENABLE_DEBUG_FAST_FAIL = false
+
+const ENABLE_CHECK_GOROUTINE_NUM_TICKER = true
 
 const GOROUTINE_NUM_LOG_FILENAME = "goroutine_num_xxafbnlassfb.log"
 
@@ -106,6 +110,10 @@ var cgntLock sync.Mutex
 var cgntInited bool
 
 func startCheckGoroutineNumTicker() {
+	if !ENABLE_CHECK_GOROUTINE_NUM_TICKER {
+		return
+	}
+
 	cgntLock.Lock()
 	defer cgntLock.Unlock()
 	if cgntInited {
@@ -113,6 +121,11 @@ func startCheckGoroutineNumTicker() {
 	}
 	cgntInited = true
 	log.Printf("start CheckGoroutineNumTicker")
+
+	//go func() {
+	//	runtime.SetBlockProfileRate(100000)
+	//	log.Println(http.ListenAndServe("localhost:60601", nil))
+	//}()
 
 	if err := os.Remove(GOROUTINE_NUM_LOG_FILENAME); err != nil {
 		log.Printf("Failed to remove old log file: %v", err)
