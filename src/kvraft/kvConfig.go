@@ -19,7 +19,7 @@ const ENABLE_TEST_VERBOSE = false
 const ENABLE_QUERY_SERVER_STATUS = true
 const QUERY_SERVER_STATUS_FREQUENCY = 300 * time.Millisecond
 
-const REQUEST_TIMEOUT = 300 * time.Millisecond
+const REQUEST_TIMEOUT = 1000 * time.Millisecond
 
 // CACHE_SIZE number of last responses cached. set to -1 to disable this feature
 const CACHE_SIZE = 10
