@@ -27,7 +27,7 @@ const LOG_BT_BIN_EXP = "Binary Exponential"
 const LOG_BT_TERM_BYPASS = "Conflict Term Bypassing"
 const LOG_BT_AGGRESSIVE = "Super Aggressive"
 
-// choose one log backtracking mode above
+// LOG_BACKTRACKING_MODE choose one log backtracking mode above
 const LOG_BACKTRACKING_MODE = LOG_BT_BIN_EXP
 
 // ENABLE_LOG turn this flag off when testing for performance
@@ -139,7 +139,7 @@ func startCheckGoroutineNumTicker() {
 
 	go func() {
 		for {
-			time.Sleep(time.Second * 1)
+			time.Sleep(time.Millisecond * 300)
 			num := runtime.NumGoroutine()
 			log.Printf("Current Goroutine Num: %d", num)
 			if _, err := file.WriteString(fmt.Sprintf("%d\n", num)); err != nil {

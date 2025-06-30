@@ -42,6 +42,13 @@ func max(a, b int) int {
 	return b
 }
 
+func maxInt64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 func hashToMd5(data []byte) string {
 	if !ENABLE_MD5 {
 		return "<MD5>"

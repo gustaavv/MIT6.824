@@ -30,6 +30,7 @@ type KVServer struct {
 	startAt            time.Time
 	lastConsumedIndex  int
 	lastReadSnapshotAt time.Time
+	unavailableUntil   int64
 }
 
 func (kv *KVServer) getDataSummary() string {
@@ -168,12 +169,26 @@ func (kv *KVServer) HandleRequest(args *KVArgs, reply *KVReply) {
 		return
 	}
 
-	_, _, isLeader := kv.rf.Start(*args)
+	if time.Now().UnixNano() < atomic.LoadInt64(&kv.unavailableUntil) {
+		reply.Success = false
+		reply.Msg = MSG_UNAVAILABLE
+		return
+	}
+
+	index, _, isLeader := kv.rf.Start(*args)
 	if !isLeader {
 		reply.Success = false
 		reply.Msg = MSG_NOT_LEADER
 		return
 	}
+
+	kv.mu.Lock()
+	if index-kv.lastConsumedIndex > UNAVAILABLE_INDEX_DIFF {
+		newUnavailableUntil := maxInt64(atomic.LoadInt64(&kv.unavailableUntil), time.Now().Add(UNAVAILABLE_INTERVAL).UnixNano())
+		atomic.StoreInt64(&kv.unavailableUntil, newUnavailableUntil)
+		log.Printf("%sserver will be unavailable for %d ms", logHeader, UNAVAILABLE_INTERVAL.Milliseconds())
+	}
+	kv.mu.Unlock()
 
 	// wait until the request has been handled
 	cs.condMu.Lock()
