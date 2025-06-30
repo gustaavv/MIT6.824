@@ -15,7 +15,7 @@ on:
         required: true
         type: choice
         options:
-          - Run All
+          - All
           - 3A
           - TestFigure8Unreliable2C
           - TestBackup2B
@@ -23,7 +23,7 @@ on:
         description: "# rounds to run the test"
         required: true
         type: choice
-        default: "1"
+        default: "2"
         options:
           - "1"
           - "2"
@@ -62,7 +62,7 @@ jobs:
             echo "Round $i:"
             rm -f app.log
 
-            if [ "${{ github.event.inputs.testcase }}" = "Run All" ]; then
+            if [ "${{ github.event.inputs.testcase }}" = "All" ]; then
               time go test -race
             else
               time go test -run ${{ github.event.inputs.testcase }} -race
