@@ -113,6 +113,17 @@ func (rf *Raft) SetEnableSnapshot(enableSnapshot bool) {
 	rf.enableSnapshot = enableSnapshot
 }
 
+func (rf *Raft) GetLastIndex() int {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	if rf.log.isEmpty() {
+		return rf.SnapShot.LastIncludedIndex
+	} else {
+		return rf.log.last().Index
+	}
+}
+
 func (rf *Raft) getDataSummary() string {
 	if !ENABLE_LOG {
 		return "<DATA_SUMMARY>"

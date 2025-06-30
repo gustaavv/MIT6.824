@@ -18,8 +18,6 @@ const ENABLE_TEST_VERBOSE = false
 
 const UNAVAILABLE_INDEX_DIFF = 50
 
-const UNAVAILABLE_INTERVAL = 300 * time.Millisecond
-
 /////////////////////////// client parameters /////////////////////////////////
 
 const ENABLE_QUERY_SERVER_STATUS = true
