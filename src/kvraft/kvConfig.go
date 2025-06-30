@@ -16,7 +16,7 @@ const ENABLE_TEST_VERBOSE = false
 
 /////////////////////////// server parameters /////////////////////////////////
 
-const UNAVAILABLE_INDEX_DIFF = 50
+const UNAVAILABLE_INDEX_DIFF = 200
 
 /////////////////////////// client parameters /////////////////////////////////
 
