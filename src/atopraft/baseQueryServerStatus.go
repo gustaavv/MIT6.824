@@ -1,6 +1,7 @@
-package kvraft
+package atopraft
 
 import (
+	"fmt"
 	"time"
 )
 
@@ -16,7 +17,7 @@ type ServerStatusReply struct {
 
 //////////////////////////////////// clerk code /////////////////////////////////////////
 
-func (ck *Clerk) setServerStatus(i int, tid int, isLeader bool) {
+func (ck *BaseClerk) setServerStatus(i int, tid int, isLeader bool) {
 	ck.mu.Lock()
 	defer ck.mu.Unlock()
 	if ck.serverStatus[i].Tid < tid {
@@ -25,7 +26,7 @@ func (ck *Clerk) setServerStatus(i int, tid int, isLeader bool) {
 	}
 }
 
-func (ck *Clerk) getPossibleLeaders() []int {
+func (ck *BaseClerk) getPossibleLeaders() []int {
 	ck.mu.Lock()
 	defer ck.mu.Unlock()
 
@@ -45,7 +46,7 @@ func (ck *Clerk) getPossibleLeaders() []int {
 	return ans
 }
 
-func (ck *Clerk) resetPossibleLeaders() {
+func (ck *BaseClerk) resetPossibleLeaders() {
 	ck.mu.Lock()
 	defer ck.mu.Unlock()
 	for i := range ck.serverStatus {
@@ -53,15 +54,16 @@ func (ck *Clerk) resetPossibleLeaders() {
 	}
 }
 
-func (ck *Clerk) querySingleServerStatus(index int) {
+func (ck *BaseClerk) querySingleServerStatus(index int) {
 	server := ck.servers[index]
 
 	args := new(ServerStatusArgs)
-	args.Cid = ck.cid
-	args.Tid = ck.tidGenerator.nextUid()
+	args.Cid = ck.Cid
+	args.Tid = ck.TidGenerator.NextUid()
 
 	reply := new(ServerStatusReply)
-	ok := server.Call("KVServer.ServerStatus", args, reply)
+
+	ok := server.Call(fmt.Sprintf("%s.ServerStatus", ck.RPCServerName), args, reply)
 	if !ok {
 		return
 	}
@@ -69,8 +71,8 @@ func (ck *Clerk) querySingleServerStatus(index int) {
 	ck.setServerStatus(index, args.Tid, reply.IsLeader)
 }
 
-func (ck *Clerk) queryAllServerStatus() {
-	if !ENABLE_QUERY_SERVER_STATUS {
+func (ck *BaseClerk) queryAllServerStatus() {
+	if !ck.Config.EnableQueryServerStatus {
 		return
 	}
 
@@ -79,18 +81,18 @@ func (ck *Clerk) queryAllServerStatus() {
 	}
 }
 
-func getNextQueryServerStatusAt() time.Time {
-	return time.Now().Add(QUERY_SERVER_STATUS_FREQUENCY)
+func (ck *BaseClerk) getNextQueryServerStatusAt() time.Time {
+	return time.Now().Add(ck.Config.QueryServerStatusFrequency)
 }
 
-func (ck *Clerk) queryServerStatusTicker() {
+func (ck *BaseClerk) queryServerStatusTicker() {
 
-	if !ENABLE_QUERY_SERVER_STATUS {
+	if !ck.Config.EnableQueryServerStatus {
 		return
 	}
 
-	for !ck.killed() {
-		time.Sleep(TICKER_FREQUENCY)
+	for !ck.Killed() {
+		time.Sleep(ck.Config.TickerFrequency)
 
 		ck.mu.Lock()
 		if ck.lastQueryServerStatusAt.After(time.Now()) {
@@ -99,15 +101,15 @@ func (ck *Clerk) queryServerStatusTicker() {
 		}
 
 		ck.queryAllServerStatus()
-		ck.lastQueryServerStatusAt = getNextQueryServerStatusAt()
+		ck.lastQueryServerStatusAt = ck.getNextQueryServerStatusAt()
 		ck.mu.Unlock()
 	}
 }
 
 //////////////////////////////////// server code /////////////////////////////////////////
 
-func (kv *KVServer) ServerStatus(args *ServerStatusArgs, reply *ServerStatusReply) {
-	_, isLeader := kv.rf.GetState()
+func (srv *BaseServer) ServerStatus(args *ServerStatusArgs, reply *ServerStatusReply) {
+	_, isLeader := srv.Rf.GetState()
 	reply.IsLeader = isLeader
 	reply.Tid = args.Tid
 }

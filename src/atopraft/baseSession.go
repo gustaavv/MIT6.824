@@ -1,4 +1,4 @@
-package kvraft
+package atopraft
 
 import (
 	"fmt"
@@ -11,18 +11,19 @@ type clientSession struct {
 	mu       sync.Mutex
 	cid      int
 	lastXid  int
-	lastResp *KVReply
+	lastResp *SrvReply
 	condMu   sync.Mutex
 	cond     *sync.Cond
 }
 
-func (cs *clientSession) String() string {
+func (cs *clientSession) String(config *BaseConfig) string {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
-	return fmt.Sprintf("CS{cid: %d, lastXid: %d, lastRespValue: %q}", cs.cid, cs.lastXid, logV(cs.lastResp.Value))
+	return fmt.Sprintf("CS{Cid: %d, lastXid: %d, lastRespValue: %q}",
+		cs.cid, cs.lastXid, LogV(cs.lastResp.Value.(ReplyValue), config))
 }
 
-func (cs *clientSession) getLastXidAndResp() (lastXid int, lastResp KVReply) {
+func (cs *clientSession) getLastXidAndResp() (lastXid int, lastResp SrvReply) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 	lastXid = cs.lastXid
@@ -30,7 +31,7 @@ func (cs *clientSession) getLastXidAndResp() (lastXid int, lastResp KVReply) {
 	return
 }
 
-func (cs *clientSession) setLastXidAndResp(lastXid int, lastResp KVReply) {
+func (cs *clientSession) setLastXidAndResp(lastXid int, lastResp SrvReply) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 	cs.lastXid = lastXid
@@ -42,7 +43,7 @@ func makeClientSession(cid int) *clientSession {
 
 	cs.cid = cid
 	cs.cond = sync.NewCond(&cs.condMu)
-	cs.lastResp = new(KVReply)
+	cs.lastResp = new(SrvReply)
 
 	return cs
 }
@@ -54,7 +55,7 @@ type session struct {
 	clientSessionMap map[int]*clientSession
 }
 
-func (s *session) String() string {
+func (s *session) String(config *BaseConfig) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var sb strings.Builder
@@ -67,7 +68,7 @@ func (s *session) String() string {
 		return csList[i].cid < csList[j].cid
 	})
 	for _, cs := range csList {
-		sb.WriteString(cs.String())
+		sb.WriteString(cs.String(config))
 		sb.WriteString(", ")
 	}
 	sb.WriteString("}}")
