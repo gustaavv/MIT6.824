@@ -15,7 +15,7 @@ import (
 
 type BaseServer struct {
 	mu      sync.Mutex
-	me      int
+	Me      int
 	Rf      *raft.Raft
 	applyCh chan raft.ApplyMsg
 	dead    int32 // set by Kill()
@@ -24,7 +24,7 @@ type BaseServer struct {
 
 	// Your definitions here.
 
-	config             *BaseConfig
+	Config             *BaseConfig
 	persister          *raft.Persister
 	Store              interface{}
 	session            session
@@ -48,7 +48,7 @@ func (srv *BaseServer) getDataSummary() string {
 	srv.mu.Lock()
 	defer srv.mu.Unlock()
 	return fmt.Sprintf("data summary: lastConsumedIndex: %d, %s",
-		srv.lastConsumedIndex, srv.session.String(srv.config))
+		srv.lastConsumedIndex, srv.session.String(srv.Config))
 }
 
 // Kill
@@ -66,7 +66,7 @@ func (srv *BaseServer) Kill() {
 	srv.Rf.Kill()
 	// Your code here, if desired.
 
-	logHeader := fmt.Sprintf("%sSrv %d: ", srv.config.LogPrefix, srv.me)
+	logHeader := fmt.Sprintf("%sSrv %d: ", srv.Config.LogPrefix, srv.Me)
 	log.Printf("%sshutting down...", logHeader)
 	srv.session.broadcastAllClientSessions()
 	log.Printf("%sshutting down all handler goroutines", logHeader)
@@ -80,7 +80,7 @@ func (srv *BaseServer) killed() bool {
 // StartBaseServer
 // servers[] contains the ports of the set of servers that will cooperate via
 // Raft to form the fault-tolerant key/value service.
-// me is the index of the current server in servers[].
+// Me is the index of the current server in servers[].
 // the k/v server should Store snapshots through the underlying Raft
 // implementation, which should call persister.SaveStateAndSnapshot() to
 // atomically save the Raft state along with the snapshot.
@@ -99,14 +99,14 @@ func StartBaseServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persis
 	labgob.Register(SrvReply{})
 
 	srv := new(BaseServer)
-	srv.me = me
+	srv.Me = me
 	srv.maxraftstate = maxraftstate
 	srv.applyCh = make(chan raft.ApplyMsg)
 	srv.Rf = raft.Make(servers, me, persister, srv.applyCh)
 	if maxraftstate < 0 {
 		srv.Rf.SetEnableSnapshot(false)
 	}
-	srv.config = config
+	srv.Config = config
 	srv.persister = persister
 	srv.Store = buildStore()
 	srv.session.clientSessionMap = make(map[int]*clientSession)
@@ -119,7 +119,7 @@ func StartBaseServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persis
 
 	srv.installSnapshot(srv.Rf.SnapShot.Data, srv.Rf.SnapShot.LastIncludedIndex)
 
-	logHeader := fmt.Sprintf("%sSrv %d: starting: ", srv.config.LogPrefix, me)
+	logHeader := fmt.Sprintf("%sSrv %d: starting: ", srv.Config.LogPrefix, me)
 	log.Printf("%sstarted, %s", logHeader, srv.getDataSummary())
 
 	go srv.consumeApplyCh(businessLogic)
@@ -135,7 +135,7 @@ func (srv *BaseServer) HandleRequest(args *SrvArgs, reply *SrvReply) {
 
 	start := time.Now()
 
-	logHeader := fmt.Sprintf("%sSrv %d: ", srv.config.LogPrefix, srv.me)
+	logHeader := fmt.Sprintf("%sSrv %d: ", srv.Config.LogPrefix, srv.Me)
 	//log.Printf("%s%s", logHeader, args.String())
 	defer func() {
 		_, isLeader := srv.Rf.GetState()
@@ -190,7 +190,7 @@ func (srv *BaseServer) HandleRequest(args *SrvArgs, reply *SrvReply) {
 	srv.mu.Lock()
 	lastConsumedIndex := srv.lastConsumedIndex
 	srv.mu.Unlock()
-	if srv.Rf.GetLastIndex()-lastConsumedIndex >= srv.config.UnavailableIndexDiff {
+	if srv.Rf.GetLastIndex()-lastConsumedIndex >= srv.Config.UnavailableIndexDiff {
 		reply.Success = false
 		reply.Msg = MSG_UNAVAILABLE
 		return
@@ -268,16 +268,20 @@ func (srv *BaseServer) consumeApplyCh(businessLogic businessLogic) {
 		lastXid, _ := cs.getLastXidAndResp()
 
 		logHeader := fmt.Sprintf("%sSrv %d: consume applyMsg: index: %d: ck %d: xid %d: ",
-			srv.config.LogPrefix, srv.me, applyMsg.CommandIndex, args.Cid, args.Xid)
+			srv.Config.LogPrefix, srv.Me, applyMsg.CommandIndex, args.Cid, args.Xid)
 
 		if lastXid < args.Xid {
+			// assume reply succeeds, but it can fail in businessLogic()
 			reply := SrvReply{Success: true}
-
 			businessLogic(srv, args, &reply)
 
 			cs.setLastXidAndResp(args.Xid, reply)
-			log.Printf("%shandle %s succeeds, payload %s, value %s",
-				logHeader, args.Op, args.PayLoad, reply.Value)
+			result := "succeeds"
+			if !reply.Success {
+				result = "fails"
+			}
+			log.Printf("%shandle %s %s, payload %s, value %s",
+				logHeader, args.Op, result, args.PayLoad, reply.Value)
 		} else if lastXid > args.Xid {
 			log.Printf("%sWARN: lastXid %d > args.Xid %d", logHeader, lastXid, args.Xid)
 		}
@@ -295,7 +299,7 @@ func (srv *BaseServer) consumeApplyCh(businessLogic businessLogic) {
 func (srv *BaseServer) checkLeaderTicker() {
 	isLeader := false
 	for !srv.killed() {
-		time.Sleep(srv.config.TickerFrequency)
+		time.Sleep(srv.Config.TickerFrequency)
 		_, isLeader2 := srv.Rf.GetState()
 
 		// Rf elected as the new leader
@@ -329,7 +333,7 @@ func (srv *BaseServer) checkRaftStateSizeTicker() {
 		srv.mu.Unlock()
 		if b {
 			log.Printf("%sSrv %d: take snapshot, index %d, stateSize: %d, maxraftstate: %d, md5: %s",
-				srv.config.LogPrefix, srv.me, index, stateSize, srv.maxraftstate, HashToMd5(snapshot, srv.config))
+				srv.Config.LogPrefix, srv.Me, index, stateSize, srv.maxraftstate, HashToMd5(snapshot, srv.Config))
 		}
 
 		time.Sleep(time.Millisecond * 10)
@@ -344,7 +348,7 @@ type ClientSessionTemp struct {
 
 // This function must be called in a critical section
 func (srv *BaseServer) takeSnapshot() []byte {
-	logHeader := fmt.Sprintf("%sSrv %d: takeSnapshot: ", srv.config.LogPrefix, srv.me)
+	logHeader := fmt.Sprintf("%sSrv %d: takeSnapshot: ", srv.Config.LogPrefix, srv.Me)
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)
 
@@ -389,7 +393,7 @@ func (srv *BaseServer) installSnapshot(snapshotData []byte, lastIncludedIndex in
 		return
 	}
 
-	logHeader := fmt.Sprintf("%sSrv %d: installSnapshot: ", srv.config.LogPrefix, srv.me)
+	logHeader := fmt.Sprintf("%sSrv %d: installSnapshot: ", srv.Config.LogPrefix, srv.Me)
 	srv.mu.Lock()
 
 	if lastIncludedIndex < srv.lastConsumedIndex {
@@ -439,7 +443,7 @@ func (srv *BaseServer) installSnapshot(snapshotData []byte, lastIncludedIndex in
 	srv.lastReadSnapshotAt = time.Now()
 
 	log.Printf("%sinstalled: lastIncludedIndex %d, md5 %s",
-		logHeader, lastIncludedIndex, HashToMd5(snapshotData, srv.config))
+		logHeader, lastIncludedIndex, HashToMd5(snapshotData, srv.Config))
 }
 
 func (srv *BaseServer) checkStatusTicker() {
@@ -451,6 +455,6 @@ func (srv *BaseServer) checkStatusTicker() {
 		srv.session.mu.Lock()
 		srv.session.mu.Unlock()
 
-		log.Printf("%sSrv %d: check status: no deadlock", srv.config.LogPrefix, srv.me)
+		log.Printf("%sSrv %d: check status: no deadlock", srv.Config.LogPrefix, srv.Me)
 	}
 }

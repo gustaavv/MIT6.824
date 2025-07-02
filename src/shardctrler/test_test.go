@@ -2,10 +2,17 @@ package shardctrler
 
 import (
 	"fmt"
+	"log"
 	"sync"
 	"testing"
 	"time"
 )
+
+func out(s string) {
+	if ENABLE_TEST_VERBOSE {
+		log.Println(s)
+	}
+}
 
 // import "time"
 
@@ -86,6 +93,7 @@ func TestBasic(t *testing.T) {
 	ck := cfg.makeClient(cfg.All())
 
 	fmt.Printf("Test: Basic leave/join ...\n")
+	out("Test: Basic leave/join ...\n")
 
 	cfa := make([]Config, 6)
 	cfa[0] = ck.Query(-1)
@@ -122,6 +130,7 @@ func TestBasic(t *testing.T) {
 	fmt.Printf("  ... Passed\n")
 
 	fmt.Printf("Test: Historical queries ...\n")
+	out("Test: Historical queries ...\n")
 
 	for s := 0; s < nservers; s++ {
 		cfg.ShutdownServer(s)
@@ -136,6 +145,7 @@ func TestBasic(t *testing.T) {
 	fmt.Printf("  ... Passed\n")
 
 	fmt.Printf("Test: Move ...\n")
+	out("Test: Move ...\n")
 	{
 		var gid3 int = 503
 		ck.Join(map[int][]string{gid3: []string{"3a", "3b", "3c"}})
@@ -181,6 +191,7 @@ func TestBasic(t *testing.T) {
 	fmt.Printf("  ... Passed\n")
 
 	fmt.Printf("Test: Concurrent leave/join ...\n")
+	out("Test: Concurrent leave/join ...\n")
 
 	const npara = 10
 	var cka [npara]*Clerk
@@ -209,6 +220,7 @@ func TestBasic(t *testing.T) {
 	fmt.Printf("  ... Passed\n")
 
 	fmt.Printf("Test: Minimal transfers after joins ...\n")
+	out("Test: Minimal transfers after joins ...\n")
 
 	c1 := ck.Query(-1)
 	for i := 0; i < 5; i++ {
@@ -232,6 +244,7 @@ func TestBasic(t *testing.T) {
 	fmt.Printf("  ... Passed\n")
 
 	fmt.Printf("Test: Minimal transfers after leaves ...\n")
+	out("Test: Minimal transfers after leaves ...\n")
 
 	for i := 0; i < 5; i++ {
 		ck.Leave([]int{int(npara + 1 + i)})
@@ -258,6 +271,7 @@ func TestMulti(t *testing.T) {
 	ck := cfg.makeClient(cfg.All())
 
 	fmt.Printf("Test: Multi-group join/leave ...\n")
+	out("Test: Multi-group join/leave ...\n")
 
 	cfa := make([]Config, 6)
 	cfa[0] = ck.Query(-1)
@@ -307,6 +321,7 @@ func TestMulti(t *testing.T) {
 	fmt.Printf("  ... Passed\n")
 
 	fmt.Printf("Test: Concurrent multi leave/join ...\n")
+	out("Test: Concurrent multi leave/join ...\n")
 
 	const npara = 10
 	var cka [npara]*Clerk
@@ -338,6 +353,7 @@ func TestMulti(t *testing.T) {
 	fmt.Printf("  ... Passed\n")
 
 	fmt.Printf("Test: Minimal transfers after multijoins ...\n")
+	out("Test: Minimal transfers after multijoins ...\n")
 
 	c1 := ck.Query(-1)
 	m := make(map[int][]string)
@@ -360,6 +376,7 @@ func TestMulti(t *testing.T) {
 	fmt.Printf("  ... Passed\n")
 
 	fmt.Printf("Test: Minimal transfers after multileaves ...\n")
+	out("Test: Minimal transfers after multileaves ...\n")
 
 	var l []int
 	for i := 0; i < 5; i++ {
@@ -380,6 +397,7 @@ func TestMulti(t *testing.T) {
 	fmt.Printf("  ... Passed\n")
 
 	fmt.Printf("Test: Check Same config on servers ...\n")
+	out("Test: Check Same config on servers ...\n")
 
 	isLeader, leader := cfg.Leader()
 	if !isLeader {

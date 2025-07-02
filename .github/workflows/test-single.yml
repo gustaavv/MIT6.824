@@ -8,6 +8,7 @@ on:
         required: true
         type: choice
         options:
+          - shardctrler
           - kvraft
           - raft
       testcase:
@@ -17,6 +18,11 @@ on:
         options:
           - All
           - 3A
+          - 3B
+          - 2A
+          - 2B
+          - 2C
+          - 2D
           - TestFigure8Unreliable2C
           - TestBackup2B
       round:

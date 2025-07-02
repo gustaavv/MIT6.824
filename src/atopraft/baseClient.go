@@ -122,11 +122,19 @@ func (ck *BaseClerk) DoRequest(payload ArgsPayLoad, op string, xid int, count in
 
 			if reply.Success {
 				ck.setServerStatus(i, args.Tid, true)
-				ck.setRespCache(xid, reply.Value.(ReplyValue))
+				var replyValue ReplyValue = nil
+				if reply.Value != nil {
+					replyValue = reply.Value.(ReplyValue)
+				}
+				ck.setRespCache(xid, replyValue)
 				ck.setLastXid(xid)
-				replyCh <- reply.Value.(ReplyValue)
+				replyCh <- replyValue
+				logValue := "nil"
+				if replyValue != nil {
+					logValue = replyValue.String()
+				}
 				log.Printf("%s%s succeeds, payload %s, value %s",
-					logHeader, op, payload.String(), reply.Value.(ReplyValue))
+					logHeader, op, payload.String(), logValue)
 			} else {
 				switch reply.Msg {
 				case MSG_NOT_LEADER:
@@ -146,6 +154,8 @@ func (ck *BaseClerk) DoRequest(payload ArgsPayLoad, op string, xid int, count in
 					log.Printf("%sserver is reading snapshot", logHeader)
 				case MSG_UNAVAILABLE:
 					log.Printf("%sserver is unavailable", logHeader)
+				case MSG_INVALID_PAYLOAD:
+					log.Fatalf("%sinvalid payload %s", logHeader, payload.String())
 				}
 			}
 		}()

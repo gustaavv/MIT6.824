@@ -1,5 +1,11 @@
 package shardctrler
 
+import (
+	"6.824/atopraft"
+	"fmt"
+	"strings"
+)
+
 //
 // Shard controler: assigns shards to replication groups.
 //
@@ -28,46 +34,100 @@ type Config struct {
 	Groups map[int][]string // gid -> servers[]
 }
 
+func (c Config) Clone() Config {
+	ans := Config{}
+
+	ans.Num = c.Num
+
+	ans.Shards = [NShards]int{}
+	for i, v := range c.Shards {
+		ans.Shards[i] = v
+	}
+
+	ans.Groups = make(map[int][]string)
+	for k, v := range c.Groups {
+		ans.Groups[k] = make([]string, len(v))
+		copy(ans.Groups[k], v)
+	}
+
+	return ans
+}
+
+func (c Config) String() string {
+	assignMap := make(map[int][]int)
+
+	// this map also includes groups with no shard assigned
+	for gid := range c.Groups {
+		assignMap[gid] = make([]int, 0)
+	}
+	for shard, gid := range c.Shards {
+		assignMap[gid] = append(assignMap[gid], shard)
+	}
+	var b strings.Builder
+	b.WriteString("{")
+	for gid, arr := range assignMap {
+		b.WriteString(fmt.Sprintf("%d->%v, ", gid, arr))
+	}
+	b.WriteString("}")
+
+	return fmt.Sprintf("Config{Num:%v, AssignMap:%s, Shards:%v, GroupLen: %d, Groups:%v}",
+		c.Num, b.String(), c.Shards, len(c.Groups), c.Groups)
+}
+
 const (
-	OK = "OK"
+	OP_JOIN  = "Join"
+	OP_LEAVE = "Leave"
+	OP_MOVE  = "Move"
+	OP_QUERY = "Query"
 )
 
-type Err string
-
-type JoinArgs struct {
-	Servers map[int][]string // new GID -> servers mappings
-}
-
-type JoinReply struct {
-	WrongLeader bool
-	Err         Err
-}
-
-type LeaveArgs struct {
+type SCPayLoad struct {
+	// Join
+	Servers map[int][]string
+	// Leave
 	GIDs []int
-}
-
-type LeaveReply struct {
-	WrongLeader bool
-	Err         Err
-}
-
-type MoveArgs struct {
+	// Move
 	Shard int
 	GID   int
+	// Query
+	Num int
 }
 
-type MoveReply struct {
-	WrongLeader bool
-	Err         Err
+func (pl SCPayLoad) String() string {
+	return fmt.Sprintf("SCPlayLoad{Servers:%v, GIDs:%v, Shard:%d, GID:%d, Num:%d}",
+		pl.Servers, pl.GIDs, pl.Shard, pl.GID, pl.Num)
 }
 
-type QueryArgs struct {
-	Num int // desired config number
+func (pl SCPayLoad) Clone() atopraft.ArgsPayLoad {
+	ans := new(SCPayLoad)
+
+	ans.Servers = make(map[int][]string)
+	for k, v := range pl.Servers {
+		ans.Servers[k] = make([]string, len(v))
+		copy(ans.Servers[k], v)
+	}
+
+	ans.GIDs = make([]int, len(pl.GIDs))
+	copy(ans.GIDs, pl.GIDs)
+
+	ans.Shard = pl.Shard
+	ans.GID = pl.GID
+	ans.Num = pl.Num
+
+	return ans
 }
 
-type QueryReply struct {
-	WrongLeader bool
-	Err         Err
-	Config      Config
+type SCReplyValue struct {
+	// Query
+	Config Config
+}
+
+func (rv SCReplyValue) String() string {
+	return fmt.Sprintf("SCReplyValue{Config:%s}", rv.Config)
+}
+
+func (rv SCReplyValue) Clone() atopraft.ReplyValue {
+	ans := new(SCReplyValue)
+	ans.Config = rv.Config.Clone()
+	return ans
 }
