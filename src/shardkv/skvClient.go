@@ -42,7 +42,7 @@ type Clerk struct {
 	// You will have to modify this struct.
 }
 
-//
+// MakeClerk
 // the tester calls MakeClerk.
 //
 // ctrlers[] is needed to call shardctrler.MakeClerk().
@@ -59,7 +59,7 @@ func MakeClerk(ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 	return ck
 }
 
-//
+// Get
 // fetch the current value for a key.
 // returns "" if the key does not exist.
 // keeps trying forever in the face of all other errors.
@@ -95,7 +95,7 @@ func (ck *Clerk) Get(key string) string {
 	return ""
 }
 
-//
+// PutAppend
 // shared by Put and Append.
 // You will have to modify this function.
 //
@@ -104,7 +104,6 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	args.Key = key
 	args.Value = value
 	args.Op = op
-
 
 	for {
 		shard := key2shard(key)
