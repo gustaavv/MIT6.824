@@ -11,7 +11,7 @@ import (
 	"log"
 )
 
-var clerkIdGenerator atopraft.UidGenerator
+var ClerkIdGenerator atopraft.UidGenerator
 
 type Clerk struct {
 	BaseClerk *atopraft.BaseClerk
@@ -24,18 +24,35 @@ func (ck *Clerk) Kill() {
 func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	// Your code here.
-	cid := clerkIdGenerator.NextUid()
-	ck.BaseClerk = atopraft.MakeBaseClerk(cid, servers, makeSCConfig(), "ShardCtrler")
+	cid := ClerkIdGenerator.NextUid()
+	ck.BaseClerk = atopraft.MakeBaseClerk(ck, cid, servers, makeSCConfig(), "ShardCtrler", handleFailureMsg)
+	return ck
+}
+
+func MakeClerk2(servers []*labrpc.ClientEnd, config *atopraft.BaseConfig) *Clerk {
+	if config == nil {
+		config = makeSCConfig()
+	}
+	ck := new(Clerk)
+	cid := ClerkIdGenerator.NextUid()
+	ck.BaseClerk = atopraft.MakeBaseClerk(ck, cid, servers, config, "ShardCtrler", handleFailureMsg)
 	return ck
 }
 
 func (ck *Clerk) Query(num int) Config {
+	return ck.BaseQuery(num, 1)
+}
+
+func (ck *Clerk) BaseQuery(num int, count int) Config {
 	xid := ck.BaseClerk.XidGenerator.NextUid()
 	logHeader := fmt.Sprintf("%sCk %d: xid %d: ",
 		ck.BaseClerk.Config.LogPrefix, ck.BaseClerk.Cid, xid)
 	log.Printf("%sstart new query request, num %d", logHeader, num)
 	payload := SCPayLoad{Num: num}
-	replyValue := ck.BaseClerk.DoRequest(&payload, OP_QUERY, xid, 1)
+	replyValue := ck.BaseClerk.DoRequest(&payload, OP_QUERY, xid, count)
+	if replyValue == nil {
+		return Config{Num: -1}
+	}
 	return replyValue.(SCReplyValue).Config
 }
 
@@ -65,3 +82,5 @@ func (ck *Clerk) Move(shard int, gid int) {
 	payload := SCPayLoad{Shard: shard, GID: gid}
 	ck.BaseClerk.DoRequest(&payload, OP_MOVE, xid, 1)
 }
+
+func handleFailureMsg(ck *atopraft.BaseClerk, msg string, logHeader string) {}

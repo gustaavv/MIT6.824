@@ -18,21 +18,21 @@ type ServerStatusReply struct {
 //////////////////////////////////// clerk code /////////////////////////////////////////
 
 func (ck *BaseClerk) setServerStatus(i int, tid int, isLeader bool) {
-	ck.mu.Lock()
-	defer ck.mu.Unlock()
-	if ck.serverStatus[i].Tid < tid {
-		ck.serverStatus[i].Tid = tid
-		ck.serverStatus[i].IsLeader = isLeader
+	ck.Mu.Lock()
+	defer ck.Mu.Unlock()
+	if ck.ServerStatus[i].Tid < tid {
+		ck.ServerStatus[i].Tid = tid
+		ck.ServerStatus[i].IsLeader = isLeader
 	}
 }
 
 func (ck *BaseClerk) getPossibleLeaders() []int {
-	ck.mu.Lock()
-	defer ck.mu.Unlock()
+	ck.Mu.Lock()
+	defer ck.Mu.Unlock()
 
 	ans := make([]int, 0)
 
-	for i, status := range ck.serverStatus {
+	for i, status := range ck.ServerStatus {
 		if status.IsLeader {
 			ans = append(ans, i)
 		}
@@ -47,15 +47,15 @@ func (ck *BaseClerk) getPossibleLeaders() []int {
 }
 
 func (ck *BaseClerk) resetPossibleLeaders() {
-	ck.mu.Lock()
-	defer ck.mu.Unlock()
-	for i := range ck.serverStatus {
-		ck.serverStatus[i].IsLeader = false
+	ck.Mu.Lock()
+	defer ck.Mu.Unlock()
+	for i := range ck.ServerStatus {
+		ck.ServerStatus[i].IsLeader = false
 	}
 }
 
 func (ck *BaseClerk) querySingleServerStatus(index int) {
-	server := ck.servers[index]
+	server := ck.Servers[index]
 
 	args := new(ServerStatusArgs)
 	args.Cid = ck.Cid
@@ -76,7 +76,7 @@ func (ck *BaseClerk) queryAllServerStatus() {
 		return
 	}
 
-	for i := range ck.servers {
+	for i := range ck.Servers {
 		go ck.querySingleServerStatus(i)
 	}
 }
@@ -94,15 +94,15 @@ func (ck *BaseClerk) queryServerStatusTicker() {
 	for !ck.Killed() {
 		time.Sleep(ck.Config.TickerFrequency)
 
-		ck.mu.Lock()
+		ck.Mu.Lock()
 		if ck.lastQueryServerStatusAt.After(time.Now()) {
-			ck.mu.Unlock()
+			ck.Mu.Unlock()
 			continue
 		}
 
 		ck.queryAllServerStatus()
 		ck.lastQueryServerStatusAt = ck.getNextQueryServerStatusAt()
-		ck.mu.Unlock()
+		ck.Mu.Unlock()
 	}
 }
 

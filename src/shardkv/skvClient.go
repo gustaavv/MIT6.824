@@ -8,38 +8,40 @@ package shardkv
 // talks to the group that holds the key's shard.
 //
 
-import "6.824/labrpc"
-import "crypto/rand"
-import "math/big"
-import "6.824/shardctrler"
-import "time"
-
-//
-// which shard is a key in?
-// please use this function,
-// and please do not change it.
-//
-func key2shard(key string) int {
-	shard := 0
-	if len(key) > 0 {
-		shard = int(key[0])
-	}
-	shard %= shardctrler.NShards
-	return shard
-}
-
-func nrand() int64 {
-	max := big.NewInt(int64(1) << 62)
-	bigx, _ := rand.Int(rand.Reader, max)
-	x := bigx.Int64()
-	return x
-}
+import (
+	"6.824/atopraft"
+	"6.824/labrpc"
+	"6.824/shardctrler"
+	"fmt"
+	"log"
+	"sync"
+	"sync/atomic"
+	"time"
+)
 
 type Clerk struct {
-	sm       *shardctrler.Clerk
+	scClerk  *shardctrler.Clerk
 	config   shardctrler.Config
 	make_end func(string) *labrpc.ClientEnd
 	// You will have to modify this struct.
+
+	Cid               int
+	mu                sync.Mutex
+	dead              int32 // set by Kill()
+	skvClerkMap       map[int]*atopraft.BaseClerk
+	skvConfig         *SKVConfig
+	xidGenerator      atopraft.UidGenerator
+	lastQueryConfigAt time.Time
+}
+
+func (ck *Clerk) Kill() {
+	atomic.StoreInt32(&ck.dead, 1)
+	ck.scClerk.BaseClerk.Kill()
+}
+
+func (ck *Clerk) Killed() bool {
+	z := atomic.LoadInt32(&ck.dead)
+	return z == 1
 }
 
 // MakeClerk
@@ -53,10 +55,101 @@ type Clerk struct {
 //
 func MakeClerk(ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
-	ck.sm = shardctrler.MakeClerk(ctrlers)
+	ck.scClerk = shardctrler.MakeClerk2(ctrlers, nil)
 	ck.make_end = make_end
 	// You'll have to add code here.
+
+	ck.Cid = ck.scClerk.BaseClerk.Cid
+	ck.skvClerkMap = make(map[int]*atopraft.BaseClerk)
+	ck.skvConfig = makeSKVConfig()
+	ck.lastQueryConfigAt = time.Now()
+
+	go ck.queryConfigTicker()
 	return ck
+}
+
+// This function must be called in a critical section
+func (ck *Clerk) queryConfigAndUpdate() {
+	ck.mu.Unlock()
+	newCfg := ck.scClerk.BaseQuery(-1, -1) // query only once
+	ck.mu.Lock()
+
+	if !(newCfg.Num > 0 && newCfg.Num > ck.config.Num) {
+		return
+	}
+	oldCfg := ck.config
+
+	// delete all old clerks
+	for gid := range oldCfg.Groups {
+		ck.skvClerkMap[gid].Kill()
+	}
+	ck.skvClerkMap = make(map[int]*atopraft.BaseClerk)
+
+	// add new clerks
+	baseConfig := makeSKVConfig().BC
+	for gid, names := range newCfg.Groups {
+		servers := make([]*labrpc.ClientEnd, len(names))
+		for i, name := range names {
+			servers[i] = ck.make_end(name)
+		}
+		cid := shardctrler.ClerkIdGenerator.NextUid()
+		ck.skvClerkMap[gid] = atopraft.MakeBaseClerk(ck, cid, servers, baseConfig, "ShardKV", handleFailureMsg)
+	}
+	ck.config = newCfg
+}
+
+func (ck *Clerk) getNextQueryConfigAt() time.Time {
+	return time.Now().Add(ck.skvConfig.CkQueryConfigFrequency)
+}
+
+func (ck *Clerk) queryConfigTicker() {
+	for !ck.Killed() {
+		time.Sleep(ck.skvConfig.BC.TickerFrequency)
+		ck.mu.Lock()
+		if ck.lastQueryConfigAt.After(time.Now()) {
+			ck.mu.Unlock()
+			continue
+		}
+		ck.queryConfigAndUpdate()
+		ck.lastQueryConfigAt = ck.getNextQueryConfigAt()
+		ck.mu.Unlock()
+	}
+}
+
+func (ck *Clerk) doRequest(key string, value string, op string) string {
+	if !(op == OP_PUT || op == OP_APPEND || op == OP_GET) {
+		log.Fatal("op not support", op)
+	}
+	shard := key2shard(key)
+	xid := ck.xidGenerator.NextUid()
+	payload := SKVPayLoad{
+		ConfigNum: 0,
+		Key:       key,
+		Value:     value,
+	}
+	logHeader := fmt.Sprintf("%sCk %d: xid %d: ",
+		ck.skvConfig.BC.LogPrefix, ck.Cid, xid)
+	log.Printf("%sstart new %s request, key %q", logHeader, op, key)
+
+	for !ck.Killed() {
+		ck.mu.Lock()
+		gid := ck.config.Shards[shard]
+		gck, ok := ck.skvClerkMap[gid]
+		if !ok {
+			ck.mu.Unlock()
+			time.Sleep(ck.skvConfig.BC.TickerFrequency)
+			continue
+		}
+		payload.ConfigNum = ck.config.Num
+		ck.mu.Unlock()
+
+		replyValue := gck.DoRequest(&payload, OP_GET, xid, -1)
+		if replyValue != nil {
+			return string(replyValue.(SKVReplyValue))
+		}
+	}
+	log.Fatalf("UNREACHABLE")
+	return ""
 }
 
 // Get
@@ -66,71 +159,32 @@ func MakeClerk(ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 // You will have to modify this function.
 //
 func (ck *Clerk) Get(key string) string {
-	args := GetArgs{}
-	args.Key = key
-
-	for {
-		shard := key2shard(key)
-		gid := ck.config.Shards[shard]
-		if servers, ok := ck.config.Groups[gid]; ok {
-			// try each server for the shard.
-			for si := 0; si < len(servers); si++ {
-				srv := ck.make_end(servers[si])
-				var reply GetReply
-				ok := srv.Call("ShardKV.Get", &args, &reply)
-				if ok && (reply.Err == OK || reply.Err == ErrNoKey) {
-					return reply.Value
-				}
-				if ok && (reply.Err == ErrWrongGroup) {
-					break
-				}
-				// ... not ok, or ErrWrongLeader
-			}
-		}
-		time.Sleep(100 * time.Millisecond)
-		// ask controler for the latest configuration.
-		ck.config = ck.sm.Query(-1)
-	}
-
-	return ""
-}
-
-// PutAppend
-// shared by Put and Append.
-// You will have to modify this function.
-//
-func (ck *Clerk) PutAppend(key string, value string, op string) {
-	args := PutAppendArgs{}
-	args.Key = key
-	args.Value = value
-	args.Op = op
-
-	for {
-		shard := key2shard(key)
-		gid := ck.config.Shards[shard]
-		if servers, ok := ck.config.Groups[gid]; ok {
-			for si := 0; si < len(servers); si++ {
-				srv := ck.make_end(servers[si])
-				var reply PutAppendReply
-				ok := srv.Call("ShardKV.PutAppend", &args, &reply)
-				if ok && reply.Err == OK {
-					return
-				}
-				if ok && reply.Err == ErrWrongGroup {
-					break
-				}
-				// ... not ok, or ErrWrongLeader
-			}
-		}
-		time.Sleep(100 * time.Millisecond)
-		// ask controler for the latest configuration.
-		ck.config = ck.sm.Query(-1)
-	}
+	return ck.doRequest(key, "", OP_GET)
 }
 
 func (ck *Clerk) Put(key string, value string) {
-	ck.PutAppend(key, value, "Put")
+	ck.doRequest(key, value, OP_PUT)
 }
 func (ck *Clerk) Append(key string, value string) {
-	ck.PutAppend(key, value, "Append")
+	ck.doRequest(key, value, OP_APPEND)
+}
+
+func handleFailureMsg(ck *atopraft.BaseClerk, msg string, logHeader string) {
+	skvCk := ck.AtopCk.(*Clerk)
+	switch msg {
+	case MSG_CONFIG_NUM_MISMATCH:
+		log.Printf("%sconfig number mismatch", logHeader)
+		go func() {
+			skvCk.mu.Lock()
+			skvCk.queryConfigAndUpdate()
+			skvCk.mu.Unlock()
+		}()
+	case MSG_NOT_MY_SHARD:
+		log.Printf("%swrong shard server mapping", logHeader)
+		go func() {
+			skvCk.mu.Lock()
+			skvCk.queryConfigAndUpdate()
+			skvCk.mu.Unlock()
+		}()
+	}
 }

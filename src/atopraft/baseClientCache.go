@@ -6,27 +6,27 @@ import (
 )
 
 func (ck *BaseClerk) setRespCache(xid int, value ReplyValue) {
-	ck.mu.Lock()
-	defer ck.mu.Unlock()
+	ck.Mu.Lock()
+	defer ck.Mu.Unlock()
 	ck.respCache[xid] = value
 }
 
 func (ck *BaseClerk) getRespCache(xid int) (value ReplyValue, existed bool) {
-	ck.mu.Lock()
-	defer ck.mu.Unlock()
+	ck.Mu.Lock()
+	defer ck.Mu.Unlock()
 	value, existed = ck.respCache[xid]
 	return
 }
 
 func (ck *BaseClerk) setLastXid(xid int) {
-	ck.mu.Lock()
-	defer ck.mu.Unlock()
+	ck.Mu.Lock()
+	defer ck.Mu.Unlock()
 	ck.lastXid = Max(xid, ck.lastXid)
 }
 
 func (ck *BaseClerk) getLastXid() int {
-	ck.mu.Lock()
-	defer ck.mu.Unlock()
+	ck.Mu.Lock()
+	defer ck.Mu.Unlock()
 	return ck.lastXid
 }
 
@@ -61,14 +61,14 @@ func (ck *BaseClerk) TrimCacheTicker() {
 	for !ck.Killed() {
 		time.Sleep(ck.Config.TickerFrequencyLarge)
 
-		ck.mu.Lock()
+		ck.Mu.Lock()
 		if ck.lastTrimCacheAt.After(time.Now()) {
-			ck.mu.Unlock()
+			ck.Mu.Unlock()
 			continue
 		}
 		ck.trimCache()
 		ck.lastTrimCacheAt = ck.getNextTrimCacheAt()
-		ck.mu.Unlock()
+		ck.Mu.Unlock()
 
 	}
 }

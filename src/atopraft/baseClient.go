@@ -11,11 +11,12 @@ import (
 )
 
 type BaseClerk struct {
-	servers []*labrpc.ClientEnd
+	Servers []*labrpc.ClientEnd
 	// You will have to modify this struct.
 
-	mu   sync.Mutex
-	dead int32 // set by Kill()
+	AtopCk interface{}
+	Mu     sync.Mutex
+	dead   int32 // set by Kill()
 
 	Cid           int
 	Config        *BaseConfig
@@ -29,12 +30,16 @@ type BaseClerk struct {
 	TidGenerator UidGenerator
 	XidGenerator UidGenerator
 
-	serverStatus            []*ServerStatusReply
+	ServerStatus            []*ServerStatusReply
 	lastQueryServerStatusAt time.Time
 	allLeaderIndex          []int // see getPossibleLeaders
 
 	lastTrimCacheAt time.Time
+
+	handleFailureMsg handleFailureMsg
 }
+
+type handleFailureMsg func(ck *BaseClerk, msg string, logHeader string)
 
 func (ck *BaseClerk) Kill() {
 	atomic.StoreInt32(&ck.dead, 1)
@@ -46,18 +51,19 @@ func (ck *BaseClerk) Killed() bool {
 	return z == 1
 }
 
-func MakeBaseClerk(cid int, servers []*labrpc.ClientEnd, config *BaseConfig, rpcServerName string) *BaseClerk {
+func MakeBaseClerk(atopCk interface{}, cid int, servers []*labrpc.ClientEnd, config *BaseConfig, rpcServerName string, handleFailureMsg handleFailureMsg) *BaseClerk {
 	ck := new(BaseClerk)
-	ck.servers = servers
+	ck.Servers = servers
+	ck.AtopCk = atopCk
 	ck.Cid = cid
 	ck.Config = config
 	ck.RPCServerName = rpcServerName
 
 	ck.respCache = make(map[int]ReplyValue)
 
-	ck.serverStatus = make([]*ServerStatusReply, len(servers))
+	ck.ServerStatus = make([]*ServerStatusReply, len(servers))
 	for i := 0; i < len(servers); i++ {
-		ck.serverStatus[i] = &ServerStatusReply{}
+		ck.ServerStatus[i] = &ServerStatusReply{}
 	}
 	ck.lastQueryServerStatusAt = time.Now()
 
@@ -67,6 +73,8 @@ func MakeBaseClerk(cid int, servers []*labrpc.ClientEnd, config *BaseConfig, rpc
 	}
 
 	ck.lastTrimCacheAt = ck.getNextTrimCacheAt()
+
+	ck.handleFailureMsg = handleFailureMsg
 
 	go ck.queryAllServerStatus()
 
@@ -101,7 +109,7 @@ func (ck *BaseClerk) DoRequest(payload ArgsPayLoad, op string, xid int, count in
 	log.Printf("%spossible leaders: %v", logHeader, leaders)
 	for _, i := range leaders {
 		i := i
-		server := ck.servers[i]
+		server := ck.Servers[i]
 		go func() {
 			args := new(SrvArgs)
 			args.PayLoad = payload
@@ -156,6 +164,10 @@ func (ck *BaseClerk) DoRequest(payload ArgsPayLoad, op string, xid int, count in
 					log.Printf("%sserver is unavailable", logHeader)
 				case MSG_INVALID_PAYLOAD:
 					log.Fatalf("%sinvalid payload %s", logHeader, payload.String())
+				case MSG_INVALID_ARGS:
+					log.Fatalf("%sinvalid args %s", logHeader, args.String())
+				default:
+					ck.handleFailureMsg(ck, reply.Msg, logHeader)
 				}
 			}
 		}()
@@ -167,6 +179,9 @@ func (ck *BaseClerk) DoRequest(payload ArgsPayLoad, op string, xid int, count in
 	case <-timeout:
 		log.Printf("%stimeout, resend requests", logHeader)
 		//ck.resetPossibleLeaders()
+		if count < 0 {
+			return nil
+		}
 		return ck.DoRequest(payload, op, xid, count+1) // TODO: set max retries?
 	}
 }

@@ -20,7 +20,7 @@ func (ck *Clerk) Kill() {
 func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	cid := clerkIdGenerator.NextUid()
-	ck.BaseClerk = atopraft.MakeBaseClerk(cid, servers, makeKVConfig(), "KVServer")
+	ck.BaseClerk = atopraft.MakeBaseClerk(ck, cid, servers, makeKVConfig(), "KVServer", handleFailureMsg)
 
 	return ck
 }
@@ -86,3 +86,5 @@ func (ck *Clerk) Put(key string, value string) {
 func (ck *Clerk) Append(key string, value string) {
 	ck.PutAppend(key, value, OP_APPEND)
 }
+
+func handleFailureMsg(ck *atopraft.BaseClerk, msg string, logHeader string) {}

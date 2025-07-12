@@ -83,6 +83,9 @@ func (cfg *config) cleanup() {
 	for i := 0; i < cfg.nctrlers; i++ {
 		cfg.ctrlerservers[i].Kill()
 	}
+	for ck := range cfg.clerks {
+		ck.Kill()
+	}
 	cfg.net.Cleanup()
 	cfg.checkTimeout()
 }

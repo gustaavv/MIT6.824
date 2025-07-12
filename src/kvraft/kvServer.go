@@ -48,14 +48,14 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	labgob.Register(KVReplyValue(""))
 
 	kv := new(KVServer)
-	kv.BaseServer = atopraft.StartBaseServer(servers, me, persister, maxraftstate, allowedOps,
-		businessLogic, buildStore, decodeStore, makeKVConfig())
+	kv.BaseServer = atopraft.StartBaseServer(kv, servers, me, persister, maxraftstate, allowedOps,
+		businessLogic, buildStore, decodeStore, validateRequest, makeKVConfig())
 	kv.rf = kv.BaseServer.Rf
 
 	return kv
 }
 
-func businessLogic(srv *atopraft.BaseServer, args atopraft.SrvArgs, reply *atopraft.SrvReply) {
+func businessLogic(srv *atopraft.BaseServer, args atopraft.SrvArgs, reply *atopraft.SrvReply, logHeader string) {
 	store2 := srv.Store.(map[string]string)
 	payload := args.PayLoad.(KVPayLoad)
 	switch args.Op {
@@ -89,6 +89,10 @@ func decodeStore(d *labgob.LabDecoder) (interface{}, error) {
 	var store map[string]string
 	err := d.Decode(&store)
 	return store, err
+}
+
+func validateRequest(srv *atopraft.BaseServer, args *atopraft.SrvArgs, reply *atopraft.SrvReply) bool {
+	return true
 }
 
 func (kv *KVServer) HandleRequest(args *atopraft.SrvArgs, reply *atopraft.SrvReply) {

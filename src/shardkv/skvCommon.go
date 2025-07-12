@@ -1,5 +1,11 @@
 package shardkv
 
+import (
+	"6.824/atopraft"
+	"6.824/shardctrler"
+	"fmt"
+)
+
 //
 // Sharded key/value server.
 // Lots of replica groups, each running Raft.
@@ -10,35 +16,55 @@ package shardkv
 //
 
 const (
-	OK             = "OK"
-	ErrNoKey       = "ErrNoKey"
-	ErrWrongGroup  = "ErrWrongGroup"
-	ErrWrongLeader = "ErrWrongLeader"
+	OP_GET    = "Get"
+	OP_PUT    = "Put"
+	OP_APPEND = "Append"
 )
 
-type Err string
+const (
+	MSG_CONFIG_NUM_MISMATCH = "CONFIG_NUM_MISMATCH"
+	MSG_NOT_MY_SHARD        = "NOT_MY_SHARD"
+)
 
-// PutAppendArgs Put or Append
-type PutAppendArgs struct {
-	// You'll have to add definitions here.
-	Key   string
-	Value string
-	Op    string // "Put" or "Append"
-	// You'll have to add definitions here.
-	// Field names must start with capital letters,
-	// otherwise RPC will break.
+type SKVPayLoad struct {
+	ConfigNum int
+	Key       string
+	Value     string
 }
 
-type PutAppendReply struct {
-	Err Err
+func (pl SKVPayLoad) String() string {
+	return fmt.Sprintf("KVPayLoad{ConfigNum: %d, Key:%q, Value:%q}",
+		pl.ConfigNum, pl.Key, pl.Value)
 }
 
-type GetArgs struct {
-	Key string
-	// You'll have to add definitions here.
+func (pl SKVPayLoad) Clone() atopraft.ArgsPayLoad {
+	return &SKVPayLoad{
+		ConfigNum: pl.ConfigNum,
+		Key:       pl.Key,
+		Value:     pl.Value,
+	}
 }
 
-type GetReply struct {
-	Err   Err
-	Value string
+type SKVReplyValue string
+
+func (rv SKVReplyValue) String() string {
+	return string(rv)
+}
+
+func (rv SKVReplyValue) Clone() atopraft.ReplyValue {
+	return &rv
+}
+
+//
+// which shard is a key in?
+// please use this function,
+// and please do not change it.
+//
+func key2shard(key string) int {
+	shard := 0
+	if len(key) > 0 {
+		shard = int(key[0])
+	}
+	shard %= shardctrler.NShards
+	return shard
 }

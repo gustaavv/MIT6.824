@@ -14,7 +14,7 @@ import (
 )
 
 type BaseServer struct {
-	mu      sync.Mutex
+	Mu      sync.Mutex
 	Me      int
 	Rf      *raft.Raft
 	applyCh chan raft.ApplyMsg
@@ -24,31 +24,62 @@ type BaseServer struct {
 
 	// Your definitions here.
 
+	AtopSrv            interface{}
 	Config             *BaseConfig
 	persister          *raft.Persister
 	Store              interface{}
 	session            session
 	startAt            time.Time
-	lastConsumedIndex  int
+	LastConsumedIndex  int
 	lastReadSnapshotAt time.Time
 	allowedOps         map[string]bool
 	decodeStore        decodeStore
+	validateRequest    validateRequest
+	unavailableFlag    int32
+	consumeCondMu      sync.Mutex
+	consumeCond        *sync.Cond
 }
 
-type businessLogic func(srv *BaseServer, args SrvArgs, reply *SrvReply)
+type businessLogic func(srv *BaseServer, args SrvArgs, reply *SrvReply, logHeader string)
 
 type buildStore func() interface{}
 
 type decodeStore func(d *labgob.LabDecoder) (interface{}, error)
 
+type validateRequest func(srv *BaseServer, args *SrvArgs, reply *SrvReply) bool
+
 func (srv *BaseServer) getDataSummary() string {
 	if !raft.ENABLE_LOG {
 		return "<DATA_SUMMARY>"
 	}
-	srv.mu.Lock()
-	defer srv.mu.Unlock()
-	return fmt.Sprintf("data summary: lastConsumedIndex: %d, %s",
-		srv.lastConsumedIndex, srv.session.String(srv.Config))
+	srv.Mu.Lock()
+	defer srv.Mu.Unlock()
+	return fmt.Sprintf("data summary: LastConsumedIndex: %d, %s",
+		srv.LastConsumedIndex, srv.session.String(srv.Config))
+}
+
+func (srv *BaseServer) SetUnavailable() {
+	atomic.StoreInt32(&srv.unavailableFlag, 1)
+}
+
+func (srv *BaseServer) SetAvailable() {
+	atomic.StoreInt32(&srv.unavailableFlag, 0)
+}
+
+func (srv *BaseServer) CheckAvailable() bool {
+	return atomic.LoadInt32(&srv.unavailableFlag) == 0
+}
+
+func (srv *BaseServer) ConsumeCondWait() {
+	srv.consumeCondMu.Lock()
+	srv.consumeCond.Wait()
+	srv.consumeCondMu.Unlock()
+}
+
+func (srv *BaseServer) ConsumeCondBroadcast() {
+	srv.consumeCondMu.Lock()
+	srv.consumeCond.Broadcast()
+	srv.consumeCondMu.Unlock()
 }
 
 // Kill
@@ -72,15 +103,15 @@ func (srv *BaseServer) Kill() {
 	log.Printf("%sshutting down all handler goroutines", logHeader)
 }
 
-func (srv *BaseServer) killed() bool {
+func (srv *BaseServer) Killed() bool {
 	z := atomic.LoadInt32(&srv.dead)
 	return z == 1
 }
 
 // StartBaseServer
-// servers[] contains the ports of the set of servers that will cooperate via
+// Servers[] contains the ports of the set of Servers that will cooperate via
 // Raft to form the fault-tolerant key/value service.
-// Me is the index of the current server in servers[].
+// Me is the index of the current server in Servers[].
 // the k/v server should Store snapshots through the underlying Raft
 // implementation, which should call persister.SaveStateAndSnapshot() to
 // atomically save the Raft state along with the snapshot.
@@ -90,15 +121,16 @@ func (srv *BaseServer) killed() bool {
 // StartKVServer() must return quickly, so it should start goroutines
 // for any long-running work.
 //
-func StartBaseServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int,
+func StartBaseServer(atopSrv interface{}, servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int,
 	Ops []string, businessLogic businessLogic, buildStore buildStore, decodeStore decodeStore,
-	config *BaseConfig) *BaseServer {
+	validateRequest validateRequest, config *BaseConfig) *BaseServer {
 	// call labgob.Register on structures you want
 	// Go's RPC library to marshall/unmarshall.
 	labgob.Register(SrvArgs{})
 	labgob.Register(SrvReply{})
 
 	srv := new(BaseServer)
+	srv.AtopSrv = atopSrv
 	srv.Me = me
 	srv.maxraftstate = maxraftstate
 	srv.applyCh = make(chan raft.ApplyMsg)
@@ -116,6 +148,8 @@ func StartBaseServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persis
 		srv.allowedOps[op] = true
 	}
 	srv.decodeStore = decodeStore
+	srv.validateRequest = validateRequest
+	srv.consumeCond = sync.NewCond(&srv.consumeCondMu)
 
 	srv.installSnapshot(srv.Rf.SnapShot.Data, srv.Rf.SnapShot.LastIncludedIndex)
 
@@ -143,20 +177,20 @@ func (srv *BaseServer) HandleRequest(args *SrvArgs, reply *SrvReply) {
 			reply.Success = false
 			reply.Msg = MSG_NOT_LEADER
 		} else if srv.maxraftstate > 0 {
-			srv.mu.Lock()
+			srv.Mu.Lock()
 			if start.Before(srv.lastReadSnapshotAt) {
 				reply.Success = false
 				reply.Msg = MSG_READ_SNAPSHOT
 			}
-			srv.mu.Unlock()
-		} else if srv.killed() {
+			srv.Mu.Unlock()
+		} else if srv.Killed() {
 			reply.Success = false
 			reply.Msg = MSG_SHUTDOWN
 		}
 		log.Printf("%sleader handles %s %s", logHeader, args.String(), reply.String())
 	}()
 
-	if srv.killed() {
+	if srv.Killed() {
 		reply.Success = false
 		reply.Msg = MSG_SHUTDOWN
 		return
@@ -174,6 +208,17 @@ func (srv *BaseServer) HandleRequest(args *SrvArgs, reply *SrvReply) {
 		return
 	}
 
+	if !(args.Cid >= 0 && args.Tid >= 0 && args.Xid >= 0) {
+		reply.Success = false
+		reply.Msg = MSG_INVALID_ARGS
+		return
+	}
+
+	if !srv.validateRequest(srv, args, reply) {
+		reply.Success = false
+		return
+	}
+
 	cs := srv.session.getClientSession(args.Cid)
 
 	// validate xid and use cache
@@ -187,10 +232,16 @@ func (srv *BaseServer) HandleRequest(args *SrvArgs, reply *SrvReply) {
 		return
 	}
 
-	srv.mu.Lock()
-	lastConsumedIndex := srv.lastConsumedIndex
-	srv.mu.Unlock()
+	srv.Mu.Lock()
+	lastConsumedIndex := srv.LastConsumedIndex
+	srv.Mu.Unlock()
 	if srv.Rf.GetLastIndex()-lastConsumedIndex >= srv.Config.UnavailableIndexDiff {
+		reply.Success = false
+		reply.Msg = MSG_UNAVAILABLE
+		return
+	}
+
+	if !srv.CheckAvailable() {
 		reply.Success = false
 		reply.Msg = MSG_UNAVAILABLE
 		return
@@ -205,13 +256,13 @@ func (srv *BaseServer) HandleRequest(args *SrvArgs, reply *SrvReply) {
 
 	// wait until the request has been handled
 	cs.condMu.Lock()
-	for lastXid < args.Xid && !srv.killed() {
+	for lastXid < args.Xid && !srv.Killed() {
 		cs.cond.Wait()
 		lastXid, lastResp = cs.getLastXidAndResp()
 	}
 	cs.condMu.Unlock()
 
-	if srv.killed() {
+	if srv.Killed() {
 		reply.Success = false
 		reply.Msg = MSG_SHUTDOWN
 		return
@@ -230,7 +281,7 @@ func (srv *BaseServer) consumeApplyCh(businessLogic businessLogic) {
 	for applyMsg := range srv.applyCh {
 		//start := time.Now()
 
-		if srv.killed() {
+		if srv.Killed() {
 			return
 		}
 
@@ -243,23 +294,23 @@ func (srv *BaseServer) consumeApplyCh(businessLogic businessLogic) {
 		}
 
 		// this mutex is used to isolate this goroutine from checkRaftStateSizeTicker's goroutine
-		srv.mu.Lock()
+		srv.Mu.Lock()
 
-		if applyMsg.CommandIndex != srv.lastConsumedIndex+1 {
+		if applyMsg.CommandIndex != srv.LastConsumedIndex+1 {
 			// this can happen only once after installing a snapshot
-			srv.mu.Unlock()
+			srv.Mu.Unlock()
 			continue
 		}
-		srv.lastConsumedIndex = applyMsg.CommandIndex
+		srv.LastConsumedIndex = applyMsg.CommandIndex
 
 		if !applyMsg.CommandValid {
-			srv.mu.Unlock()
+			srv.Mu.Unlock()
 			continue
 		}
 
 		// no-op
 		if applyMsg.Command == nil {
-			srv.mu.Unlock()
+			srv.Mu.Unlock()
 			continue
 		}
 
@@ -273,11 +324,12 @@ func (srv *BaseServer) consumeApplyCh(businessLogic businessLogic) {
 		if lastXid < args.Xid {
 			// assume reply succeeds, but it can fail in businessLogic()
 			reply := SrvReply{Success: true}
-			businessLogic(srv, args, &reply)
+			businessLogic(srv, args, &reply, logHeader)
 
-			cs.setLastXidAndResp(args.Xid, reply)
 			result := "succeeds"
-			if !reply.Success {
+			if reply.Success {
+				cs.setLastXidAndResp(args.Xid, reply)
+			} else {
 				result = "fails"
 			}
 			log.Printf("%shandle %s %s, payload %s, value %s",
@@ -292,13 +344,15 @@ func (srv *BaseServer) consumeApplyCh(businessLogic businessLogic) {
 
 		//log.Printf("%stakes %.4f seconds", logHeader, time.Since(start).Seconds())
 
-		srv.mu.Unlock()
+		srv.Mu.Unlock()
+
+		srv.ConsumeCondBroadcast()
 	}
 }
 
 func (srv *BaseServer) checkLeaderTicker() {
 	isLeader := false
-	for !srv.killed() {
+	for !srv.Killed() {
 		time.Sleep(srv.Config.TickerFrequency)
 		_, isLeader2 := srv.Rf.GetState()
 
@@ -317,20 +371,20 @@ func (srv *BaseServer) checkRaftStateSizeTicker() {
 		return
 	}
 
-	for !srv.killed() {
+	for !srv.Killed() {
 		stateSize := srv.persister.RaftStateSize()
 		if stateSize < srv.maxraftstate*95/100 {
 			srv.Rf.PersisterCondWait()
 			continue
 		}
 
-		srv.mu.Lock()
+		srv.Mu.Lock()
 
-		index := srv.lastConsumedIndex
+		index := srv.LastConsumedIndex
 		snapshot := srv.takeSnapshot()
 		b := srv.Rf.Snapshot(index, snapshot)
 
-		srv.mu.Unlock()
+		srv.Mu.Unlock()
 		if b {
 			log.Printf("%sSrv %d: take snapshot, index %d, stateSize: %d, maxraftstate: %d, md5: %s",
 				srv.Config.LogPrefix, srv.Me, index, stateSize, srv.maxraftstate, HashToMd5(snapshot, srv.Config))
@@ -394,17 +448,17 @@ func (srv *BaseServer) installSnapshot(snapshotData []byte, lastIncludedIndex in
 	}
 
 	logHeader := fmt.Sprintf("%sSrv %d: installSnapshot: ", srv.Config.LogPrefix, srv.Me)
-	srv.mu.Lock()
+	srv.Mu.Lock()
 
-	if lastIncludedIndex < srv.lastConsumedIndex {
+	if lastIncludedIndex < srv.LastConsumedIndex {
 		// must not install old snapshot
-		srv.mu.Unlock()
-		log.Printf("%snot installed: lastIncludedIndex %d < srv.lastConsumedIndex %d",
-			logHeader, lastIncludedIndex, srv.lastConsumedIndex)
+		srv.Mu.Unlock()
+		log.Printf("%snot installed: lastIncludedIndex %d < srv.LastConsumedIndex %d",
+			logHeader, lastIncludedIndex, srv.LastConsumedIndex)
 		return
 	}
 
-	defer srv.mu.Unlock()
+	defer srv.Mu.Unlock()
 
 	r := bytes.NewBuffer(snapshotData)
 	d := labgob.NewDecoder(r)
@@ -439,7 +493,7 @@ func (srv *BaseServer) installSnapshot(snapshotData []byte, lastIncludedIndex in
 		srv.session.mu.Unlock()
 	}
 
-	srv.lastConsumedIndex = lastIncludedIndex
+	srv.LastConsumedIndex = lastIncludedIndex
 	srv.lastReadSnapshotAt = time.Now()
 
 	log.Printf("%sinstalled: lastIncludedIndex %d, md5 %s",
@@ -447,14 +501,35 @@ func (srv *BaseServer) installSnapshot(snapshotData []byte, lastIncludedIndex in
 }
 
 func (srv *BaseServer) checkStatusTicker() {
-	for !srv.killed() {
+	if !srv.Config.EnableCheckStatusTicker {
+		return
+	}
+
+	for !srv.Killed() {
 		time.Sleep(time.Second)
 
-		srv.mu.Lock()
-		srv.mu.Unlock()
+		srv.Mu.Lock()
+		srv.Mu.Unlock()
 		srv.session.mu.Lock()
 		srv.session.mu.Unlock()
 
 		log.Printf("%sSrv %d: check status: no deadlock", srv.Config.LogPrefix, srv.Me)
 	}
+}
+
+func (srv *BaseServer) WaitUntilEntryConsumed(index int) {
+	for {
+		srv.Mu.Lock()
+		if srv.LastConsumedIndex >= index {
+			srv.Mu.Unlock()
+			return
+		}
+		srv.Mu.Unlock()
+		srv.ConsumeCondWait()
+	}
+}
+
+func (srv *BaseServer) CheckLeader() bool {
+	_, isLeader := srv.Rf.GetState()
+	return isLeader
 }

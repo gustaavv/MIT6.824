@@ -16,7 +16,8 @@ type BaseConfig struct {
 
 	/////////////////////////// server parameters /////////////////////////////////
 
-	UnavailableIndexDiff int
+	UnavailableIndexDiff    int
+	EnableCheckStatusTicker bool
 
 	/////////////////////////// client parameters /////////////////////////////////
 
@@ -47,6 +48,7 @@ func NewBaseConfig() *BaseConfig {
 		EnableMD5:                  false,
 		LogPrefix:                  "",
 		UnavailableIndexDiff:       200,
+		EnableCheckStatusTicker:    true,
 		EnableQueryServerStatus:    true,
 		QueryServerStatusFrequency: 300 * time.Millisecond,
 		RequestTimeout:             500 * time.Millisecond,

@@ -43,13 +43,13 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister)
 	labgob.Register(Config{})
 
 	sc := new(ShardCtrler)
-	sc.BaseServer = atopraft.StartBaseServer(servers, me, persister, -1, allowedOps,
-		businessLogic, buildStore, decodeStore, makeSCConfig())
+	sc.BaseServer = atopraft.StartBaseServer(sc, servers, me, persister, -1, allowedOps,
+		businessLogic, buildStore, decodeStore, validateRequest, makeSCConfig())
 	sc.rf = sc.BaseServer.Rf
 	return sc
 }
 
-func businessLogic(srv *atopraft.BaseServer, args atopraft.SrvArgs, reply *atopraft.SrvReply) {
+func businessLogic(srv *atopraft.BaseServer, args atopraft.SrvArgs, reply *atopraft.SrvReply, logHeader string) {
 	store := srv.Store.([]Config)
 	payload := args.PayLoad.(SCPayLoad)
 
@@ -266,6 +266,10 @@ func decodeStore(d *labgob.LabDecoder) (interface{}, error) {
 	var store []Config
 	err := d.Decode(&store)
 	return store, err
+}
+
+func validateRequest(srv *atopraft.BaseServer, args *atopraft.SrvArgs, reply *atopraft.SrvReply) bool {
+	return true
 }
 
 func (sc *ShardCtrler) HandleRequest(args *atopraft.SrvArgs, reply *atopraft.SrvReply) {
