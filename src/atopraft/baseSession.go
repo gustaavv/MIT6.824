@@ -19,8 +19,12 @@ type clientSession struct {
 func (cs *clientSession) String(config *BaseConfig) string {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
+	value := "nil"
+	if cs.lastResp.Value != nil {
+		value = LogV(cs.lastResp.Value.(ReplyValue), config)
+	}
 	return fmt.Sprintf("CS{Cid: %d, lastXid: %d, lastRespValue: %q}",
-		cs.cid, cs.lastXid, LogV(cs.lastResp.Value.(ReplyValue), config))
+		cs.cid, cs.lastXid, value)
 }
 
 func (cs *clientSession) getLastXidAndResp() (lastXid int, lastResp SrvReply) {

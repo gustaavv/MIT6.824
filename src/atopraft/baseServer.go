@@ -219,6 +219,7 @@ func (srv *BaseServer) HandleRequest(args *SrvArgs, reply *SrvReply) {
 		return
 	}
 
+	// ids < 0 are for internal use. Clients can't use such ids
 	if !(args.Cid >= 0 && args.Tid >= 0 && args.Xid >= 0) {
 		reply.Success = false
 		reply.Msg = MSG_INVALID_ARGS
@@ -334,7 +335,8 @@ func (srv *BaseServer) consumeApplyCh(businessLogic businessLogic) {
 		logHeader := fmt.Sprintf("%sSrv %d: consume applyMsg: index: %d: ck %d: xid %d: ",
 			srv.Config.LogPrefix, srv.Sid, applyMsg.CommandIndex, args.Cid, args.Xid)
 
-		if lastXid < args.Xid {
+		// xid < 0 is for internal use
+		if lastXid < args.Xid || args.Xid < 0 {
 			// assume reply succeeds, but it can fail in businessLogic()
 			reply := SrvReply{Success: true}
 			businessLogic(srv, args, &reply, logHeader)

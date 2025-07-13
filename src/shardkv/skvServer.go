@@ -11,33 +11,33 @@ import (
 import "6.824/raft"
 import "6.824/labgob"
 
+type SKVStore struct {
+	Data           [shardctrler.NShards]map[string]string
+	MyShards       map[int]bool
+	ReConfigStatus int
+	ReConfigNum    int
+	Config         shardctrler.Config
+	SkvUnavailable bool
+}
+
 type ShardKV struct {
 	BaseServer *atopraft.BaseServer
 	rf         *raft.Raft
 	make_end   func(string) *labrpc.ClientEnd
 	gid        int
 
-	// store fields
-
-	myShards       map[int]bool
-	reConfigStatus int
-	reConfigNum    int
-
-	config               shardctrler.Config
-	skvUnavailable       bool
-	skvConfig            *SKVConfig
-	lastQueryConfigAt    time.Time
-	scClerk              *shardctrler.Clerk
-	reConfigXidGenerator atopraft.UidGenerator
-	reConfigMu           sync.Mutex
-	initLogConsumed      bool
+	skvConfig         *SKVConfig
+	lastQueryConfigAt time.Time
+	scClerk           *shardctrler.Clerk
+	reConfigMu        sync.Mutex
+	initLogConsumed   bool
 }
 
 func (kv *ShardKV) getReConfigTuple() (reConfigNum int, reConfigStatus int) {
 	kv.BaseServer.Mu.Lock()
 	defer kv.BaseServer.Mu.Unlock()
-	reConfigNum = kv.reConfigNum
-	reConfigStatus = kv.reConfigStatus
+	reConfigNum = kv.BaseServer.Store.(SKVStore).ReConfigNum
+	reConfigStatus = kv.BaseServer.Store.(SKVStore).ReConfigStatus
 	return
 }
 
@@ -102,10 +102,6 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.make_end = make_end
 	kv.gid = gid
 
-	kv.myShards = make(map[int]bool)
-	kv.reConfigNum = 0
-	kv.reConfigStatus = RECONFIG_STATUS_COMMIT
-
 	kv.scClerk = shardctrler.MakeClerk2(ctrlers, nil)
 	kv.skvConfig = makeSKVConfig()
 
@@ -115,17 +111,18 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 }
 
 func businessLogic(srv *atopraft.BaseServer, args atopraft.SrvArgs, reply *atopraft.SrvReply, logHeader string) {
+	store := srv.Store.(SKVStore)
 	skv := srv.AtopSrv.(*ShardKV)
 
 	switch args.PayLoad.(type) {
 	case SKVPayLoad:
-		if skv.skvUnavailable {
+		if store.SkvUnavailable {
 			reply.Success = false
 			reply.Msg = atopraft.MSG_UNAVAILABLE
 			return
 		}
 		payload := args.PayLoad.(SKVPayLoad)
-		store2 := srv.Store.([]map[string]string)
+		store2 := store.Data
 		shard := key2shard(payload.Key)
 		switch args.Op {
 		case OP_GET:
@@ -151,64 +148,67 @@ func businessLogic(srv *atopraft.BaseServer, args atopraft.SrvArgs, reply *atopr
 	case ReConfigPayLoad:
 		payload := args.PayLoad.(ReConfigPayLoad)
 
-		if skv.reConfigStatus == RECONFIG_STATUS_COMMIT &&
+		if store.ReConfigStatus == RECONFIG_STATUS_COMMIT &&
 			payload.Status == RECONFIG_STATUS_START &&
-			payload.Config.Num == skv.reConfigNum+1 {
+			payload.Config.Num == store.ReConfigNum+1 {
 			// new config
-			skv.reConfigNum++
-			skv.reConfigStatus = RECONFIG_STATUS_START
-			skv.skvUnavailable = true
-			log.Printf("%sgroup %d: reConfig: (%d, START)", logHeader, skv.gid, skv.reConfigNum)
-		} else if skv.reConfigStatus == RECONFIG_STATUS_START &&
+			store.ReConfigNum++
+			store.ReConfigStatus = RECONFIG_STATUS_START
+			store.SkvUnavailable = true
+			log.Printf("%sgroup %d: reConfig: (%d, START)", logHeader, skv.gid, store.ReConfigNum)
+		} else if store.ReConfigStatus == RECONFIG_STATUS_START &&
 			payload.Status == RECONFIG_STATUS_PREPARE &&
-			payload.Config.Num == skv.reConfigNum {
+			payload.Config.Num == store.ReConfigNum {
 			// apply inData (adding shards) when preparing
-			store2 := srv.Store.([]map[string]string)
 			for shardNum, shardData := range payload.InData {
-				if _, ok := skv.myShards[shardNum]; ok {
+				if _, ok := store.MyShards[shardNum]; ok {
 					log.Fatalf("")
 				}
-				store2[shardNum] = cloneStr2StrMap(shardData)
-				skv.myShards[shardNum] = true
+				store.Data[shardNum] = cloneStr2StrMap(shardData)
+				store.MyShards[shardNum] = true
 			}
-			skv.reConfigStatus = RECONFIG_STATUS_PREPARE
-			log.Printf("%sgroup %d: reConfig: (%d, PREPARE)", logHeader, skv.gid, skv.reConfigNum)
-		} else if skv.reConfigStatus == RECONFIG_STATUS_PREPARE &&
+			store.ReConfigStatus = RECONFIG_STATUS_PREPARE
+			log.Printf("%sgroup %d: reConfig: (%d, PREPARE)", logHeader, skv.gid, store.ReConfigNum)
+		} else if store.ReConfigStatus == RECONFIG_STATUS_PREPARE &&
 			payload.Status == RECONFIG_STATUS_COMMIT &&
-			payload.Config.Num == skv.reConfigNum {
+			payload.Config.Num == store.ReConfigNum {
 			// apply outData (delete shards) when commiting
 			for _, shardNum := range payload.OutShards {
-				if _, ok := skv.myShards[shardNum]; !ok {
+				if _, ok := store.MyShards[shardNum]; !ok {
 					log.Fatalf("")
 				}
-				delete(skv.myShards, shardNum)
-				store2 := srv.Store.([]map[string]string)
-				store2[shardNum] = make(map[string]string)
+				delete(store.MyShards, shardNum)
+				store.Data[shardNum] = make(map[string]string)
 			}
-			skv.config = payload.Config
-			skv.reConfigStatus = RECONFIG_STATUS_COMMIT
-			skv.skvUnavailable = false
-			log.Printf("%sgroup %d: reConfig: (%d, COMMIT)", logHeader, skv.gid, skv.reConfigNum)
+			store.Config = payload.Config
+			store.ReConfigStatus = RECONFIG_STATUS_COMMIT
+			store.SkvUnavailable = false
+			log.Printf("%sgroup %d: reConfig: (%d, COMMIT)", logHeader, skv.gid, store.ReConfigNum)
 		} else {
 			// TODO log warning?
 		}
 
 	}
+
+	srv.Store = store
 }
 
 func buildStore() interface{} {
-	// TODO may need to define a store struct to include multiple fields
+	ans := SKVStore{}
 
-	// shard the kv store by key at the beginning
-	ans := make([]map[string]string, shardctrler.NShards)
 	for i := 0; i < shardctrler.NShards; i++ {
-		ans[i] = make(map[string]string)
+		ans.Data[i] = make(map[string]string)
 	}
+
+	ans.MyShards = make(map[int]bool)
+	ans.ReConfigNum = 0
+	ans.ReConfigStatus = RECONFIG_STATUS_COMMIT
+
 	return ans
 }
 
 func decodeStore(d *labgob.LabDecoder) (interface{}, error) {
-	var store []map[string]string
+	var store SKVStore
 	err := d.Decode(&store)
 	return store, err
 }
@@ -218,7 +218,6 @@ func validateRequest(srv *atopraft.BaseServer, args *atopraft.SrvArgs, reply *at
 	defer srv.Mu.Unlock()
 
 	payload := args.PayLoad.(SKVPayLoad)
-	atopSrv := srv.AtopSrv.(*ShardKV)
 
 	//if payload.ConfigNum > atopSrv.config.Num {
 	//	go func() {
@@ -226,13 +225,13 @@ func validateRequest(srv *atopraft.BaseServer, args *atopraft.SrvArgs, reply *at
 	//	}()
 	//}
 
-	if payload.ConfigNum != atopSrv.config.Num {
+	if payload.ConfigNum != srv.Store.(SKVStore).Config.Num {
 		reply.Success = false
 		reply.Msg = MSG_CONFIG_NUM_MISMATCH
 		return false
 	}
 
-	if _, ok := atopSrv.myShards[key2shard(payload.Key)]; !ok {
+	if _, ok := srv.Store.(SKVStore).MyShards[key2shard(payload.Key)]; !ok {
 		reply.Success = false
 		reply.Msg = MSG_NOT_MY_SHARD
 		return false

@@ -89,7 +89,7 @@ func (kv *ShardKV) queryConfigAndUpdate() {
 	}
 
 	kv.BaseServer.Mu.Lock()
-	oldCfg := kv.config
+	oldCfg := kv.BaseServer.Store.(SKVStore).Config
 	// update the config one by one instead of going to the latest one directly
 	nextNum := oldCfg.Num + 1
 	kv.BaseServer.Mu.Unlock()
@@ -137,7 +137,7 @@ func (kv *ShardKV) queryConfigAndUpdate() {
 
 		// 2. Start a new log entry to mark the start of the reConfig
 		args := atopraft.SrvArgs{
-			Cid: -1, Xid: kv.reConfigXidGenerator.NextUid(), Tid: -1, Op: "",
+			Cid: -1, Xid: -1, Tid: -1, Op: "",
 			PayLoad: ReConfigPayLoad{Config: shardctrler.Config{Num: newCfg.Num}, Status: RECONFIG_STATUS_START},
 		}
 		index, _, isLeader := kv.BaseServer.Rf.Start(args)
@@ -160,7 +160,7 @@ func (kv *ShardKV) queryConfigAndUpdate() {
 
 		// 4. prepare
 		args := atopraft.SrvArgs{
-			Cid: -1, Xid: kv.reConfigXidGenerator.NextUid(), Tid: -1, Op: "",
+			Cid: -1, Xid: -1, Tid: -1, Op: "",
 			PayLoad: ReConfigPayLoad{Config: shardctrler.Config{Num: newCfg.Num}, Status: RECONFIG_STATUS_PREPARE, InData: inData},
 		}
 		index, _, isLeader := kv.BaseServer.Rf.Start(args)
@@ -182,7 +182,7 @@ func (kv *ShardKV) queryConfigAndUpdate() {
 		log.Printf("%sall other groups are at least (%d, PREPARE)", logHeader, nextNum)
 		// 5. commit
 		args := atopraft.SrvArgs{
-			Cid: -1, Xid: kv.reConfigXidGenerator.NextUid(), Tid: -1, Op: "",
+			Cid: -1, Xid: -1, Tid: -1, Op: "",
 			PayLoad: ReConfigPayLoad{Config: newCfg, Status: RECONFIG_STATUS_COMMIT, OutShards: outShards},
 		}
 		index, _, isLeader := kv.BaseServer.Rf.Start(args)
@@ -349,9 +349,10 @@ func merge2Groups(oldGroups map[int][]string, newGroups map[int][]string) map[in
 
 func (kv *ShardKV) WaitUntilInSardData(InShards []int) map[int]map[string]string {
 	kv.BaseServer.Mu.Lock()
-	configNum := kv.config.Num
-	groups := kv.config.Groups
-	shards := kv.config.Shards
+	store := kv.BaseServer.Store.(SKVStore)
+	configNum := store.Config.Num
+	groups := store.Config.Groups
+	shards := store.Config.Shards
 	kv.BaseServer.Mu.Unlock()
 
 	ans := make(map[int]map[string]string)
@@ -438,7 +439,7 @@ func (kv *ShardKV) GetShardData(args *GetShardDataArgs, reply *GetShardDataReply
 	kv.BaseServer.Mu.Lock()
 	defer kv.BaseServer.Mu.Unlock()
 
-	if _, ok := kv.myShards[args.Shard]; !ok {
+	if _, ok := kv.BaseServer.Store.(SKVStore).MyShards[args.Shard]; !ok {
 		reply.Success = false
 		return
 	}
@@ -452,5 +453,5 @@ func (kv *ShardKV) GetShardData(args *GetShardDataArgs, reply *GetShardDataReply
 }
 
 func (kv *ShardKV) CloneShard(shard int) map[string]string {
-	return cloneStr2StrMap(kv.BaseServer.Store.([]map[string]string)[shard])
+	return cloneStr2StrMap(kv.BaseServer.Store.(SKVStore).Data[shard])
 }

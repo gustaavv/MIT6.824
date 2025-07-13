@@ -29,9 +29,9 @@ func makeSKVConfig() *SKVConfig {
 
 	return &SKVConfig{
 		BC:                      baseConfig,
-		SrvQueryConfigFrequency: time.Millisecond * 100,
-		SrvRPCFrequency:         time.Millisecond * 10,
-		EnableRPCLog:            true,
-		CkQueryConfigFrequency:  time.Millisecond * 100,
+		SrvQueryConfigFrequency: time.Millisecond * 25,
+		SrvRPCFrequency:         time.Millisecond * 1,
+		EnableRPCLog:            false,
+		CkQueryConfigFrequency:  time.Millisecond * 10,
 	}
 }
