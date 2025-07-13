@@ -13,6 +13,7 @@ type SKVConfig struct {
 	/////////////////////////// server parameters /////////////////////////////////
 
 	SrvQueryConfigFrequency time.Duration
+	SrvRPCFrequency         time.Duration
 
 	/////////////////////////// client parameters /////////////////////////////////
 
@@ -26,7 +27,8 @@ func makeSKVConfig() *SKVConfig {
 
 	return &SKVConfig{
 		BC:                      baseConfig,
-		CkQueryConfigFrequency:  time.Millisecond * 100,
 		SrvQueryConfigFrequency: time.Millisecond * 100,
+		SrvRPCFrequency:         time.Millisecond * 100,
+		CkQueryConfigFrequency:  time.Millisecond * 100,
 	}
 }

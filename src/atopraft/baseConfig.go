@@ -13,6 +13,7 @@ type BaseConfig struct {
 	EnableMD5      bool
 	// to distinguish different services
 	LogPrefix string
+	EnableLog bool
 
 	/////////////////////////// server parameters /////////////////////////////////
 
@@ -47,6 +48,7 @@ func NewBaseConfig() *BaseConfig {
 		EnableLogValue:             false,
 		EnableMD5:                  false,
 		LogPrefix:                  "",
+		EnableLog:                  true,
 		UnavailableIndexDiff:       200,
 		EnableCheckStatusTicker:    true,
 		EnableQueryServerStatus:    true,

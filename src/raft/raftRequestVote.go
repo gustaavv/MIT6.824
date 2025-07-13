@@ -56,8 +56,10 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	reply.Term = args.Term
 
 	if args.Term > rf.currentTerm {
-		log.Printf("%s%v becomes follower because candidate (inst %d) with higher term: %d -> %d",
-			logHeader, rf.state, args.CandidateId, rf.currentTerm, args.Term)
+		if ENABLE_RAFT_LOG {
+			log.Printf("%s%v becomes follower because candidate (inst %d) with higher term: %d -> %d",
+				logHeader, rf.state, args.CandidateId, rf.currentTerm, args.Term)
+		}
 		rf.currentTerm = args.Term
 		rf.votedFor = -1
 		rf.electionTimeoutAt = getNextElectionTimeout()
@@ -84,7 +86,9 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if (rf.votedFor == -1 || rf.votedFor == args.CandidateId) && candidateLogUpToDate {
 		reply.VoteGranted = true
 		rf.votedFor = args.CandidateId
-		log.Printf("%svote for candidate %d at term %d", logHeader, rf.votedFor, rf.currentTerm)
+		if ENABLE_RAFT_LOG {
+			log.Printf("%svote for candidate %d at term %d", logHeader, rf.votedFor, rf.currentTerm)
+		}
 		// Reset election timeout when "granting vote to candidate",
 		// otherwise the follower will never become a candidate.
 		rf.electionTimeoutAt = getNextElectionTimeout()
@@ -167,8 +171,9 @@ func (rf *Raft) electionTimeoutTicker() {
 		rf.currentTerm++
 		rf.votedFor = rf.me
 		rf.persist(false)
-		log.Printf("%sfollower becomes candidate at a new term %d", logHeader, rf.currentTerm)
-
+		if ENABLE_RAFT_LOG {
+			log.Printf("%sfollower becomes candidate at a new term %d", logHeader, rf.currentTerm)
+		}
 		timeout := time.After(getElectionTimeoutDuration() * time.Millisecond)
 
 		// Get a majority vote is enough to be elected as the new leader, but a waitGroup can not
@@ -225,8 +230,10 @@ func (rf *Raft) electionTimeoutTicker() {
 				logHeader := fmt.Sprintf("inst %d: RV Resp: Trace: %d: ", rf.me, reply.TraceId)
 
 				if reply.Term > rf.currentTerm {
-					log.Printf("%scandidate becomes follower because higher term: %d -> %d",
-						logHeader, rf.currentTerm, reply.Term)
+					if ENABLE_RAFT_LOG {
+						log.Printf("%scandidate becomes follower because higher term: %d -> %d",
+							logHeader, rf.currentTerm, reply.Term)
+					}
 					rf.currentTerm = reply.Term
 					rf.votedFor = -1
 					rf.electionTimeoutAt = getNextElectionTimeout()
@@ -261,10 +268,10 @@ func (rf *Raft) electionTimeoutTicker() {
 				rf.mu.Unlock()
 				continue
 			}
-
-			log.Printf("%scandidate election at term %d timeouts (lacking %d votes). Start a new one",
-				logHeader, term, *voteCount)
-
+			if ENABLE_RAFT_LOG {
+				log.Printf("%scandidate election at term %d timeouts (lacking %d votes). Start a new one",
+					logHeader, term, *voteCount)
+			}
 			// Although it shouldn't be a follower as in Figure 2, but for the convenience of coding, let's do this.
 			// Since we set election timeout at now, it won't wait too much time
 			rf.electionTimeoutAt = time.Now()
@@ -281,9 +288,10 @@ func (rf *Raft) electionTimeoutTicker() {
 				rf.mu.Unlock()
 				continue
 			}
-
-			log.Printf("%scandidate becomes leader at term %d. %s",
-				logHeader, rf.currentTerm, rf.getDataSummary())
+			if ENABLE_RAFT_LOG {
+				log.Printf("%scandidate becomes leader at term %d. %s",
+					logHeader, rf.currentTerm, rf.getDataSummary())
+			}
 			rf.state = STATE_LEADER
 			rf.initVolatileLeaderState()
 			rf.firstLogIndexCurrentTerm = rf.SnapShot.LastIncludedIndex + 1

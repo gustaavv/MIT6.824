@@ -43,7 +43,9 @@ type handleFailureMsg func(ck *BaseClerk, msg string, logHeader string)
 
 func (ck *BaseClerk) Kill() {
 	atomic.StoreInt32(&ck.dead, 1)
-	log.Printf("%sCk %d: shutting down...", ck.Config.LogPrefix, ck.Cid)
+	if ck.Config.EnableLog {
+		log.Printf("%sCk %d: shutting down...", ck.Config.LogPrefix, ck.Cid)
+	}
 }
 
 func (ck *BaseClerk) Killed() bool {
@@ -80,9 +82,9 @@ func MakeBaseClerk(atopCk interface{}, cid int, servers []*labrpc.ClientEnd, con
 
 	go ck.queryServerStatusTicker()
 	go ck.TrimCacheTicker()
-
-	log.Printf("%sCk %d: start", ck.Config.LogPrefix, ck.Cid)
-
+	if ck.Config.EnableLog {
+		log.Printf("%sCk %d: start", ck.Config.LogPrefix, ck.Cid)
+	}
 	return ck
 }
 
@@ -106,7 +108,9 @@ func (ck *BaseClerk) DoRequest(payload ArgsPayLoad, op string, xid int, count in
 	timeout := time.After(ck.Config.RequestTimeout)
 
 	leaders := ck.getPossibleLeaders()
-	log.Printf("%spossible leaders: %v", logHeader, leaders)
+	if ck.Config.EnableLog {
+		log.Printf("%spossible leaders: %v", logHeader, leaders)
+	}
 	for _, i := range leaders {
 		i := i
 		server := ck.Servers[i]
@@ -141,27 +145,39 @@ func (ck *BaseClerk) DoRequest(payload ArgsPayLoad, op string, xid int, count in
 				if replyValue != nil {
 					logValue = replyValue.String()
 				}
-				log.Printf("%s%s succeeds, payload %s, value %s",
-					logHeader, op, payload.String(), logValue)
+				if ck.Config.EnableLog {
+					log.Printf("%s%s succeeds, payload %s, value %s",
+						logHeader, op, payload.String(), logValue)
+				}
 			} else {
 				switch reply.Msg {
 				case MSG_NOT_LEADER:
 					ck.setServerStatus(i, args.Tid, false)
 				case MSG_OLD_XID:
-					log.Printf("%swarn: send request with old xid to leader", logHeader)
+					if ck.Config.EnableLog {
+						log.Printf("%swarn: send request with old xid to leader", logHeader)
+					}
 					ck.setServerStatus(i, args.Tid, true)
 				case MSG_MULTIPLE_XID:
-					log.Printf("%swarn: wrong use of client, you should send requests with one xid at a time", logHeader)
+					if ck.Config.EnableLog {
+						log.Printf("%swarn: wrong use of client, you should send requests with one xid at a time", logHeader)
+					}
 					ck.setServerStatus(i, args.Tid, true)
 				case MSG_OP_UNSUPPORTED:
 					log.Fatalf("%sunsupported operation %s", logHeader, args.Op)
 				case MSG_SHUTDOWN:
-					log.Printf("%sserver is shutting down", logHeader)
+					if ck.Config.EnableLog {
+						log.Printf("%sserver is shutting down", logHeader)
+					}
 					ck.setServerStatus(i, args.Tid, false)
 				case MSG_READ_SNAPSHOT:
-					log.Printf("%sserver is reading snapshot", logHeader)
+					if ck.Config.EnableLog {
+						log.Printf("%sserver is reading snapshot", logHeader)
+					}
 				case MSG_UNAVAILABLE:
-					log.Printf("%sserver is unavailable", logHeader)
+					if ck.Config.EnableLog {
+						log.Printf("%sserver is unavailable", logHeader)
+					}
 				case MSG_INVALID_PAYLOAD:
 					log.Fatalf("%sinvalid payload %s", logHeader, payload.String())
 				case MSG_INVALID_ARGS:
@@ -177,7 +193,9 @@ func (ck *BaseClerk) DoRequest(payload ArgsPayLoad, op string, xid int, count in
 	case v := <-replyCh:
 		return v
 	case <-timeout:
-		log.Printf("%stimeout, resend requests", logHeader)
+		if ck.Config.EnableLog {
+			log.Printf("%stimeout, resend requests", logHeader)
+		}
 		//ck.resetPossibleLeaders()
 		if count < 0 {
 			return nil

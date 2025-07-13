@@ -143,7 +143,7 @@ func (ck *Clerk) doRequest(key string, value string, op string) string {
 		payload.ConfigNum = ck.config.Num
 		ck.mu.Unlock()
 
-		replyValue := gck.DoRequest(&payload, OP_GET, xid, -1)
+		replyValue := gck.DoRequest(&payload, op, xid, -1)
 		if replyValue != nil {
 			return string(replyValue.(SKVReplyValue))
 		}

@@ -5,7 +5,7 @@ import (
 	"6.824/labrpc"
 	"6.824/shardctrler"
 	"log"
-	"sync/atomic"
+	"sync"
 	"time"
 )
 import "6.824/raft"
@@ -24,11 +24,12 @@ type ShardKV struct {
 	reConfigNum    int
 
 	config               shardctrler.Config
-	skvUnavailable       int32
+	skvUnavailable       bool
 	skvConfig            *SKVConfig
 	lastQueryConfigAt    time.Time
 	scClerk              *shardctrler.Clerk
-	ReConfigXidGenerator atopraft.UidGenerator
+	reConfigXidGenerator atopraft.UidGenerator
+	reConfigMu           sync.Mutex
 }
 
 // Kill
@@ -41,19 +42,9 @@ func (kv *ShardKV) Kill() {
 	kv.BaseServer.Kill()
 }
 
-func (kv *ShardKV) setSKVUnavailable() {
-	atomic.StoreInt32(&kv.skvUnavailable, 1)
-}
-
-func (kv *ShardKV) setSKVAvailable() {
-	atomic.StoreInt32(&kv.skvUnavailable, 0)
-}
-
-func (kv *ShardKV) checkSKVAvailable() bool {
-	return atomic.LoadInt32(&kv.skvUnavailable) == 0
-}
-
 var allowedOps = []string{OP_GET, OP_PUT, OP_APPEND}
+
+var serverIdGenerator atopraft.UidGenerator
 
 // StartServer
 // servers[] contains the ports of the servers in this group.
@@ -95,7 +86,8 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	labgob.Register(GetShardDataReply{})
 
 	kv := new(ShardKV)
-	kv.BaseServer = atopraft.StartBaseServer(kv, servers, me, persister, maxraftstate, allowedOps,
+	sid := serverIdGenerator.NextUid()
+	kv.BaseServer = atopraft.StartBaseServer(sid, kv, servers, me, persister, maxraftstate, allowedOps,
 		businessLogic, buildStore, decodeStore, validateRequest, makeSKVConfig().BC)
 	kv.rf = kv.BaseServer.Rf
 	kv.make_end = make_end
@@ -113,21 +105,12 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	return kv
 }
 
-func (kv *ShardKV) CloneShard(shard int) map[string]string {
-	ans := make(map[string]string)
-	for k, v := range kv.BaseServer.Store.([]map[string]string)[shard] {
-		ans[k] = v
-	}
-
-	return ans
-}
-
 func businessLogic(srv *atopraft.BaseServer, args atopraft.SrvArgs, reply *atopraft.SrvReply, logHeader string) {
 	skv := srv.AtopSrv.(*ShardKV)
 
 	switch args.PayLoad.(type) {
 	case SKVPayLoad:
-		if !skv.checkSKVAvailable() {
+		if skv.skvUnavailable {
 			reply.Success = false
 			reply.Msg = atopraft.MSG_UNAVAILABLE
 			return
@@ -165,7 +148,7 @@ func businessLogic(srv *atopraft.BaseServer, args atopraft.SrvArgs, reply *atopr
 			// new config
 			skv.reConfigNum++
 			skv.reConfigStatus = RECONFIG_STATUS_START
-			skv.setSKVUnavailable()
+			skv.skvUnavailable = true
 			log.Printf("%sgroup %d: reConfig: (%d, START)", logHeader, skv.gid, skv.reConfigNum)
 		} else if skv.reConfigStatus == RECONFIG_STATUS_START &&
 			payload.Status == RECONFIG_STATUS_PREPARE &&
@@ -176,7 +159,7 @@ func businessLogic(srv *atopraft.BaseServer, args atopraft.SrvArgs, reply *atopr
 				if _, ok := skv.myShards[shardNum]; ok {
 					log.Fatalf("")
 				}
-				store2[shardNum] = shardData
+				store2[shardNum] = cloneStr2StrMap(shardData)
 				skv.myShards[shardNum] = true
 			}
 			skv.reConfigStatus = RECONFIG_STATUS_PREPARE
@@ -185,16 +168,17 @@ func businessLogic(srv *atopraft.BaseServer, args atopraft.SrvArgs, reply *atopr
 			payload.Status == RECONFIG_STATUS_COMMIT &&
 			payload.Config.Num == skv.reConfigNum {
 			// apply outData (delete shards) when commiting
-			for _, shardNum := range payload.OutData {
+			for _, shardNum := range payload.OutShards {
 				if _, ok := skv.myShards[shardNum]; !ok {
 					log.Fatalf("")
 				}
+				delete(skv.myShards, shardNum)
 				store2 := srv.Store.([]map[string]string)
 				store2[shardNum] = make(map[string]string)
 			}
 			skv.config = payload.Config
 			skv.reConfigStatus = RECONFIG_STATUS_COMMIT
-			skv.setSKVAvailable()
+			skv.skvUnavailable = false
 			log.Printf("%sgroup %d: reConfig: (%d, COMMIT)", logHeader, skv.gid, skv.reConfigNum)
 		} else {
 			// TODO log warning?
@@ -229,9 +213,7 @@ func validateRequest(srv *atopraft.BaseServer, args *atopraft.SrvArgs, reply *at
 
 	//if payload.ConfigNum > atopSrv.config.Num {
 	//	go func() {
-	//		srv.Mu.Lock()
 	//		atopSrv.queryConfigAndUpdate()
-	//		srv.Mu.Unlock()
 	//	}()
 	//}
 

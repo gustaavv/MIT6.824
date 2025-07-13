@@ -29,6 +29,8 @@ func (sc *ShardCtrler) Raft() *raft.Raft {
 	return sc.BaseServer.Rf
 }
 
+var serverIdGenerator atopraft.UidGenerator
+
 var allowedOps = []string{OP_JOIN, OP_LEAVE, OP_MOVE, OP_QUERY}
 
 // StartServer
@@ -43,7 +45,8 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister)
 	labgob.Register(Config{})
 
 	sc := new(ShardCtrler)
-	sc.BaseServer = atopraft.StartBaseServer(sc, servers, me, persister, -1, allowedOps,
+	sid := serverIdGenerator.NextUid()
+	sc.BaseServer = atopraft.StartBaseServer(sid, sc, servers, me, persister, -1, allowedOps,
 		businessLogic, buildStore, decodeStore, validateRequest, makeSCConfig())
 	sc.rf = sc.BaseServer.Rf
 	return sc
@@ -252,8 +255,10 @@ func businessLogic(srv *atopraft.BaseServer, args atopraft.SrvArgs, reply *atopr
 		log.Fatalf("")
 	}
 	srv.Store = store
-	log.Printf("%sSrv %d: req(ck %d, xid %d) leads to new config: %s",
-		srv.Config.LogPrefix, srv.Me, args.Cid, args.Xid, newConfig.String())
+	if srv.Config.EnableLog {
+		log.Printf("%sSrv %d: req(ck %d, xid %d) leads to new config: %s",
+			srv.Config.LogPrefix, srv.Me, args.Cid, args.Xid, newConfig.String())
+	}
 }
 
 func buildStore() interface{} {

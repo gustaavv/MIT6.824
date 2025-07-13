@@ -47,7 +47,9 @@ func (ck *Clerk) BaseQuery(num int, count int) Config {
 	xid := ck.BaseClerk.XidGenerator.NextUid()
 	logHeader := fmt.Sprintf("%sCk %d: xid %d: ",
 		ck.BaseClerk.Config.LogPrefix, ck.BaseClerk.Cid, xid)
-	log.Printf("%sstart new query request, num %d", logHeader, num)
+	if ck.BaseClerk.Config.EnableLog {
+		log.Printf("%sstart new query request, num %d", logHeader, num)
+	}
 	payload := SCPayLoad{Num: num}
 	replyValue := ck.BaseClerk.DoRequest(&payload, OP_QUERY, xid, count)
 	if replyValue == nil {
@@ -60,7 +62,9 @@ func (ck *Clerk) Join(servers map[int][]string) {
 	xid := ck.BaseClerk.XidGenerator.NextUid()
 	logHeader := fmt.Sprintf("%sCk %d: xid %d: ",
 		ck.BaseClerk.Config.LogPrefix, ck.BaseClerk.Cid, xid)
-	log.Printf("%sstart new join request, servers %v", logHeader, servers)
+	if ck.BaseClerk.Config.EnableLog {
+		log.Printf("%sstart new join request, servers %v", logHeader, servers)
+	}
 	payload := SCPayLoad{Servers: servers}
 	ck.BaseClerk.DoRequest(&payload, OP_JOIN, xid, 1)
 }
@@ -69,7 +73,9 @@ func (ck *Clerk) Leave(gids []int) {
 	xid := ck.BaseClerk.XidGenerator.NextUid()
 	logHeader := fmt.Sprintf("%sCk %d: xid %d: ",
 		ck.BaseClerk.Config.LogPrefix, ck.BaseClerk.Cid, xid)
-	log.Printf("%sstart new leave request, gids %v", logHeader, gids)
+	if ck.BaseClerk.Config.EnableLog {
+		log.Printf("%sstart new leave request, gids %v", logHeader, gids)
+	}
 	payload := SCPayLoad{GIDs: gids}
 	ck.BaseClerk.DoRequest(&payload, OP_LEAVE, xid, 1)
 }
@@ -78,7 +84,9 @@ func (ck *Clerk) Move(shard int, gid int) {
 	xid := ck.BaseClerk.XidGenerator.NextUid()
 	logHeader := fmt.Sprintf("%sCk %d: xid %d: ",
 		ck.BaseClerk.Config.LogPrefix, ck.BaseClerk.Cid, xid)
-	log.Printf("%sstart new move request, shard %d, gid %d", logHeader, shard, gid)
+	if ck.BaseClerk.Config.EnableLog {
+		log.Printf("%sstart new move request, shard %d, gid %d", logHeader, shard, gid)
+	}
 	payload := SCPayLoad{Shard: shard, GID: gid}
 	ck.BaseClerk.DoRequest(&payload, OP_MOVE, xid, 1)
 }

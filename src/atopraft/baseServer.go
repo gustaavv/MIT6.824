@@ -14,8 +14,11 @@ import (
 )
 
 type BaseServer struct {
-	Mu      sync.Mutex
-	Me      int
+	Mu sync.Mutex
+	Me int
+	// Me should not be used as the id of a server. Instead, use Sid.
+	// TODO: make raft use Sid too
+	Sid     int
 	Rf      *raft.Raft
 	applyCh chan raft.ApplyMsg
 	dead    int32 // set by Kill()
@@ -97,10 +100,14 @@ func (srv *BaseServer) Kill() {
 	srv.Rf.Kill()
 	// Your code here, if desired.
 
-	logHeader := fmt.Sprintf("%sSrv %d: ", srv.Config.LogPrefix, srv.Me)
-	log.Printf("%sshutting down...", logHeader)
+	logHeader := fmt.Sprintf("%sSrv %d: ", srv.Config.LogPrefix, srv.Sid)
+	if srv.Config.EnableLog {
+		log.Printf("%sshutting down...", logHeader)
+	}
 	srv.session.broadcastAllClientSessions()
-	log.Printf("%sshutting down all handler goroutines", logHeader)
+	if srv.Config.EnableLog {
+		log.Printf("%sshutting down all handler goroutines", logHeader)
+	}
 }
 
 func (srv *BaseServer) Killed() bool {
@@ -121,7 +128,7 @@ func (srv *BaseServer) Killed() bool {
 // StartKVServer() must return quickly, so it should start goroutines
 // for any long-running work.
 //
-func StartBaseServer(atopSrv interface{}, servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int,
+func StartBaseServer(sid int, atopSrv interface{}, servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int,
 	Ops []string, businessLogic businessLogic, buildStore buildStore, decodeStore decodeStore,
 	validateRequest validateRequest, config *BaseConfig) *BaseServer {
 	// call labgob.Register on structures you want
@@ -131,6 +138,7 @@ func StartBaseServer(atopSrv interface{}, servers []*labrpc.ClientEnd, me int, p
 
 	srv := new(BaseServer)
 	srv.AtopSrv = atopSrv
+	srv.Sid = sid
 	srv.Me = me
 	srv.maxraftstate = maxraftstate
 	srv.applyCh = make(chan raft.ApplyMsg)
@@ -153,9 +161,10 @@ func StartBaseServer(atopSrv interface{}, servers []*labrpc.ClientEnd, me int, p
 
 	srv.installSnapshot(srv.Rf.SnapShot.Data, srv.Rf.SnapShot.LastIncludedIndex)
 
-	logHeader := fmt.Sprintf("%sSrv %d: starting: ", srv.Config.LogPrefix, me)
-	log.Printf("%sstarted, %s", logHeader, srv.getDataSummary())
-
+	logHeader := fmt.Sprintf("%sSrv %d: starting: ", srv.Config.LogPrefix, sid)
+	if srv.Config.EnableLog {
+		log.Printf("%sstarted, %s", logHeader, srv.getDataSummary())
+	}
 	go srv.consumeApplyCh(businessLogic)
 	go srv.checkLeaderTicker()
 	go srv.checkRaftStateSizeTicker()
@@ -169,7 +178,7 @@ func (srv *BaseServer) HandleRequest(args *SrvArgs, reply *SrvReply) {
 
 	start := time.Now()
 
-	logHeader := fmt.Sprintf("%sSrv %d: ", srv.Config.LogPrefix, srv.Me)
+	logHeader := fmt.Sprintf("%sSrv %d: ", srv.Config.LogPrefix, srv.Sid)
 	//log.Printf("%s%s", logHeader, args.String())
 	defer func() {
 		_, isLeader := srv.Rf.GetState()
@@ -187,7 +196,9 @@ func (srv *BaseServer) HandleRequest(args *SrvArgs, reply *SrvReply) {
 			reply.Success = false
 			reply.Msg = MSG_SHUTDOWN
 		}
-		log.Printf("%sleader handles %s %s", logHeader, args.String(), reply.String())
+		if srv.Config.EnableLog {
+			log.Printf("%sleader handles %s %s", logHeader, args.String(), reply.String())
+		}
 	}()
 
 	if srv.Killed() {
@@ -319,7 +330,7 @@ func (srv *BaseServer) consumeApplyCh(businessLogic businessLogic) {
 		lastXid, _ := cs.getLastXidAndResp()
 
 		logHeader := fmt.Sprintf("%sSrv %d: consume applyMsg: index: %d: ck %d: xid %d: ",
-			srv.Config.LogPrefix, srv.Me, applyMsg.CommandIndex, args.Cid, args.Xid)
+			srv.Config.LogPrefix, srv.Sid, applyMsg.CommandIndex, args.Cid, args.Xid)
 
 		if lastXid < args.Xid {
 			// assume reply succeeds, but it can fail in businessLogic()
@@ -332,10 +343,14 @@ func (srv *BaseServer) consumeApplyCh(businessLogic businessLogic) {
 			} else {
 				result = "fails"
 			}
-			log.Printf("%shandle %s %s, payload %s, value %s",
-				logHeader, args.Op, result, args.PayLoad, reply.Value)
+			if srv.Config.EnableLog {
+				log.Printf("%shandle %s %s, payload %s, value %s",
+					logHeader, args.Op, result, args.PayLoad, reply.Value)
+			}
 		} else if lastXid > args.Xid {
-			log.Printf("%sWARN: lastXid %d > args.Xid %d", logHeader, lastXid, args.Xid)
+			if srv.Config.EnableLog {
+				log.Printf("%sWARN: lastXid %d > args.Xid %d", logHeader, lastXid, args.Xid)
+			}
 		}
 
 		cs.condMu.Lock()
@@ -386,8 +401,10 @@ func (srv *BaseServer) checkRaftStateSizeTicker() {
 
 		srv.Mu.Unlock()
 		if b {
-			log.Printf("%sSrv %d: take snapshot, index %d, stateSize: %d, maxraftstate: %d, md5: %s",
-				srv.Config.LogPrefix, srv.Me, index, stateSize, srv.maxraftstate, HashToMd5(snapshot, srv.Config))
+			if srv.Config.EnableLog {
+				log.Printf("%sSrv %d: take snapshot, index %d, stateSize: %d, maxraftstate: %d, md5: %s",
+					srv.Config.LogPrefix, srv.Sid, index, stateSize, srv.maxraftstate, HashToMd5(snapshot, srv.Config))
+			}
 		}
 
 		time.Sleep(time.Millisecond * 10)
@@ -402,7 +419,7 @@ type ClientSessionTemp struct {
 
 // This function must be called in a critical section
 func (srv *BaseServer) takeSnapshot() []byte {
-	logHeader := fmt.Sprintf("%sSrv %d: takeSnapshot: ", srv.Config.LogPrefix, srv.Me)
+	logHeader := fmt.Sprintf("%sSrv %d: takeSnapshot: ", srv.Config.LogPrefix, srv.Sid)
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)
 
@@ -447,14 +464,16 @@ func (srv *BaseServer) installSnapshot(snapshotData []byte, lastIncludedIndex in
 		return
 	}
 
-	logHeader := fmt.Sprintf("%sSrv %d: installSnapshot: ", srv.Config.LogPrefix, srv.Me)
+	logHeader := fmt.Sprintf("%sSrv %d: installSnapshot: ", srv.Config.LogPrefix, srv.Sid)
 	srv.Mu.Lock()
 
 	if lastIncludedIndex < srv.LastConsumedIndex {
 		// must not install old snapshot
 		srv.Mu.Unlock()
-		log.Printf("%snot installed: lastIncludedIndex %d < srv.LastConsumedIndex %d",
-			logHeader, lastIncludedIndex, srv.LastConsumedIndex)
+		if srv.Config.EnableLog {
+			log.Printf("%snot installed: lastIncludedIndex %d < srv.LastConsumedIndex %d",
+				logHeader, lastIncludedIndex, srv.LastConsumedIndex)
+		}
 		return
 	}
 
@@ -495,9 +514,10 @@ func (srv *BaseServer) installSnapshot(snapshotData []byte, lastIncludedIndex in
 
 	srv.LastConsumedIndex = lastIncludedIndex
 	srv.lastReadSnapshotAt = time.Now()
-
-	log.Printf("%sinstalled: lastIncludedIndex %d, md5 %s",
-		logHeader, lastIncludedIndex, HashToMd5(snapshotData, srv.Config))
+	if srv.Config.EnableLog {
+		log.Printf("%sinstalled: lastIncludedIndex %d, md5 %s",
+			logHeader, lastIncludedIndex, HashToMd5(snapshotData, srv.Config))
+	}
 }
 
 func (srv *BaseServer) checkStatusTicker() {
@@ -512,8 +532,9 @@ func (srv *BaseServer) checkStatusTicker() {
 		srv.Mu.Unlock()
 		srv.session.mu.Lock()
 		srv.session.mu.Unlock()
-
-		log.Printf("%sSrv %d: check status: no deadlock", srv.Config.LogPrefix, srv.Me)
+		if srv.Config.EnableLog {
+			log.Printf("%sSrv %d: check status: no deadlock", srv.Config.LogPrefix, srv.Sid)
+		}
 	}
 }
 

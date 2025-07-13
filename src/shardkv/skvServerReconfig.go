@@ -15,7 +15,7 @@ const (
 	RECONFIG_STATUS_COMMIT  = 2
 )
 
-func ReConfigStatusMap(status int) string {
+func mapReConfigStatusToString(status int) string {
 	switch status {
 	case RECONFIG_STATUS_START:
 		return "START"
@@ -33,22 +33,23 @@ type ReConfigPayLoad struct {
 	// shard num -> shard data
 	InData map[int]map[string]string
 	// shard num
-	OutData []int
-	Config  shardctrler.Config
+	OutShards []int
+	Config    shardctrler.Config
 }
 
-func (pl ReConfigPayLoad) getInDataShards() []int {
+func (pl ReConfigPayLoad) getInShards() []int {
 	ans := make([]int, len(pl.InData))
 	i := 0
 	for k := range pl.InData {
 		ans[i] = k
+		i++
 	}
 	return ans
 }
 
 func (pl ReConfigPayLoad) String() string {
-	return fmt.Sprintf("ReConfigPayLoad{Status:%s, InData:%v, outData:%v, Config:%s}",
-		ReConfigStatusMap(pl.Status), pl.getInDataShards(), pl.OutData, pl.Config)
+	return fmt.Sprintf("ReConfigPayLoad{Status:%s, InShards:%v, outShards:%v, Config:%s}",
+		mapReConfigStatusToString(pl.Status), pl.getInShards(), pl.OutShards, pl.Config)
 }
 
 func (pl ReConfigPayLoad) Clone() atopraft.ArgsPayLoad {
@@ -102,11 +103,17 @@ func (kv *ShardKV) queryConfigAndUpdate() {
 		return
 	}
 	logHeader := fmt.Sprintf("%sSrv %d: group %d: reConfig: nextNum %d: ",
-		kv.skvConfig.BC.LogPrefix, kv.BaseServer.Me, kv.gid, nextNum)
+		kv.skvConfig.BC.LogPrefix, kv.BaseServer.Sid, kv.gid, nextNum)
 
-	// 1. make sure all groups achieve consensus about moving to the new config
-	kv.WaitUntilReConfigConsensus(nextNum, RECONFIG_STATUS_START)
-	log.Printf("%sall other groups are at least START", logHeader)
+	// only one goroutine can do the reConfig process
+	kv.reConfigMu.Lock()
+	defer kv.reConfigMu.Unlock()
+	allGroups := merge2Groups(oldCfg.Groups, newCfg.Groups)
+
+	// 1. make sure all groups achieve consensus that they are in the same config
+	log.Printf("%swait for other groups to be at least (%d, COMMIT)", logHeader, oldCfg.Num)
+	kv.WaitUntilReConfigConsensus(oldCfg.Num, RECONFIG_STATUS_COMMIT, allGroups)
+	log.Printf("%sall other groups are at least (%d, COMMIT)", logHeader, oldCfg.Num)
 
 	if !kv.BaseServer.CheckLeader() {
 		return
@@ -115,7 +122,7 @@ func (kv *ShardKV) queryConfigAndUpdate() {
 
 	// 2. Start a new log entry to mark the start of the reConfig
 	args := atopraft.SrvArgs{
-		Cid: -1, Xid: kv.ReConfigXidGenerator.NextUid(), Tid: -1, Op: "",
+		Cid: -1, Xid: kv.reConfigXidGenerator.NextUid(), Tid: -1, Op: "",
 		PayLoad: ReConfigPayLoad{Config: newCfg, Status: RECONFIG_STATUS_START},
 	}
 	index, _, isLeader := kv.BaseServer.Rf.Start(args)
@@ -126,18 +133,18 @@ func (kv *ShardKV) queryConfigAndUpdate() {
 	log.Printf("%sSTART entry consumed", logHeader)
 
 	// 3. Communicate with other groups to get/send shards
-	inShards, outShards := MakeShardReConfigInfo(oldCfg.Shards, newCfg.Shards, kv.gid)
+	inShards, outShards := makeShardReConfigInfo(oldCfg.Shards, newCfg.Shards, kv.gid)
+	log.Printf("%sinShards: %v, outShards: %v", logHeader, inShards, outShards)
 	// TODO: optimization: if both inShards and outShards are empty, we can commit directly without communication with other groups
 
 	// only send inShards requests, not sending outShards proactively. let other groups request their inShards,
 	// which are this group's outShards
 	inData := kv.WaitUntilInSardData(inShards)
-	outData := outShards
 
 	// 4. prepare
 	args = atopraft.SrvArgs{
-		Cid: -1, Xid: kv.ReConfigXidGenerator.NextUid(), Tid: -1, Op: "",
-		PayLoad: ReConfigPayLoad{Config: newCfg, Status: RECONFIG_STATUS_PREPARE, InData: inData, OutData: outData},
+		Cid: -1, Xid: kv.reConfigXidGenerator.NextUid(), Tid: -1, Op: "",
+		PayLoad: ReConfigPayLoad{Config: newCfg, Status: RECONFIG_STATUS_PREPARE, InData: inData, OutShards: outShards},
 	}
 	index, _, isLeader = kv.BaseServer.Rf.Start(args)
 	if !isLeader {
@@ -147,12 +154,13 @@ func (kv *ShardKV) queryConfigAndUpdate() {
 	log.Printf("%sPREPARE entry consumed", logHeader)
 
 	// if all other groups are prepared, then sending outShards succeeds.
-	kv.WaitUntilReConfigConsensus(nextNum, RECONFIG_STATUS_PREPARE)
-	log.Printf("%sall other groups are at least PREPARE", logHeader)
+	log.Printf("%swait for other groups to be at least (%d, PREPARE)", logHeader, nextNum)
+	kv.WaitUntilReConfigConsensus(nextNum, RECONFIG_STATUS_PREPARE, allGroups)
+	log.Printf("%sall other groups are at least (%d, PREPARE)", logHeader, nextNum)
 	// 5. commit
 	args = atopraft.SrvArgs{
-		Cid: -1, Xid: kv.ReConfigXidGenerator.NextUid(), Tid: -1, Op: "",
-		PayLoad: ReConfigPayLoad{Config: newCfg, Status: RECONFIG_STATUS_COMMIT, InData: inData, OutData: outData},
+		Cid: -1, Xid: kv.reConfigXidGenerator.NextUid(), Tid: -1, Op: "",
+		PayLoad: ReConfigPayLoad{Config: newCfg, Status: RECONFIG_STATUS_COMMIT, InData: inData, OutShards: outShards},
 	}
 	index, _, isLeader = kv.BaseServer.Rf.Start(args)
 	if !isLeader {
@@ -162,16 +170,21 @@ func (kv *ShardKV) queryConfigAndUpdate() {
 	log.Printf("%sCOMMIT entry consumed", logHeader)
 
 	kv.BaseServer.SetAvailable()
+	log.Printf("%s reConfig succeeds", logHeader)
 }
 
 // WaitUntilReConfigConsensus other groups' (num, status) should >= parameters' (num, status)
-func (kv *ShardKV) WaitUntilReConfigConsensus(num int, status int) {
-	kv.BaseServer.Mu.Lock()
+func (kv *ShardKV) WaitUntilReConfigConsensus(num int, status int, allGroups map[int][]string) {
 	var wg sync.WaitGroup
+	wg.Add(len(allGroups) - 1) // exclude kv's group
+	if _, ok := allGroups[kv.gid]; !ok {
+		wg.Add(1)
+	}
 
-	wg.Add(len(kv.config.Groups))
-
-	for _, servers := range kv.config.Groups {
+	for gid, servers := range allGroups {
+		if gid == kv.gid {
+			continue
+		}
 		servers := servers
 		go func() {
 			loop := true
@@ -180,6 +193,7 @@ func (kv *ShardKV) WaitUntilReConfigConsensus(num int, status int) {
 				for _, serverName := range servers {
 					end := kv.make_end(serverName)
 					args := new(ReConfigStatusArgs)
+					args.Sid = kv.BaseServer.Sid
 					reply := new(ReConfigStatusReply)
 					b := end.Call("ShardKV.ReConfigStatus", args, reply)
 					if !(b && reply.Success) {
@@ -193,15 +207,20 @@ func (kv *ShardKV) WaitUntilReConfigConsensus(num int, status int) {
 						break
 					}
 				}
+				time.Sleep(kv.skvConfig.SrvRPCFrequency)
 			}
 
 		}()
 	}
-	kv.BaseServer.Mu.Unlock()
 	wg.Wait()
 }
 
 type ReConfigStatusArgs struct {
+	Sid int
+}
+
+func (args *ReConfigStatusArgs) String() string {
+	return fmt.Sprintf("ReConfigStatusArgs{Sid:%d}", args.Sid)
 }
 
 type ReConfigStatusReply struct {
@@ -210,9 +229,18 @@ type ReConfigStatusReply struct {
 	Status  int
 }
 
-func (kv *ShardKV) ReConfigStatus(_ *ReConfigStatusArgs, reply *ReConfigStatusReply) {
+func (reply *ReConfigStatusReply) String() string {
+	return fmt.Sprintf("ReConfigStatusReply{Success:%v, Num:%d, Status:%s}",
+		reply.Success, reply.Num, mapReConfigStatusToString(reply.Status))
+}
+
+func (kv *ShardKV) ReConfigStatus(args *ReConfigStatusArgs, reply *ReConfigStatusReply) {
 	kv.BaseServer.Mu.Lock()
 	defer kv.BaseServer.Mu.Unlock()
+	defer func() {
+		log.Printf("%sSrv %d: ReConfigStatus: args %s, reply %s",
+			kv.skvConfig.BC.LogPrefix, kv.BaseServer.Sid, args.String(), reply.String())
+	}()
 	if !kv.BaseServer.CheckLeader() {
 		reply.Success = false
 		return
@@ -223,10 +251,10 @@ func (kv *ShardKV) ReConfigStatus(_ *ReConfigStatusArgs, reply *ReConfigStatusRe
 	reply.Status = kv.reConfigStatus
 }
 
-// MakeShardReConfigInfo
+// makeShardReConfigInfo
 // inShards are the shards this group needs in the new config
 // outShards are the shards this group does not need in the new config
-func MakeShardReConfigInfo(
+func makeShardReConfigInfo(
 	oldShard [shardctrler.NShards]int,
 	newShard [shardctrler.NShards]int,
 	gid int) (inShards []int, outShards []int) {
@@ -242,6 +270,37 @@ func MakeShardReConfigInfo(
 	}
 
 	return
+}
+
+func merge2Groups(oldGroups map[int][]string, newGroups map[int][]string) map[int][]string {
+	ans := make(map[int][]string)
+
+	for gid, servers := range oldGroups {
+		ans[gid] = make([]string, len(servers))
+		copy(ans[gid], servers)
+	}
+
+	for gid, servers := range newGroups {
+		if _, ok := oldGroups[gid]; !ok {
+			ans[gid] = make([]string, len(servers))
+			copy(ans[gid], servers)
+		} else {
+			for _, server := range servers {
+				existed := false
+				for _, oldServer := range oldGroups[gid] {
+					if oldServer == server {
+						existed = true
+						break
+					}
+				}
+				if !existed {
+					ans[gid] = append(ans[gid], server)
+				}
+			}
+		}
+	}
+
+	return ans
 }
 
 func (kv *ShardKV) WaitUntilInSardData(InShards []int) map[int]map[string]string {
@@ -274,6 +333,7 @@ func (kv *ShardKV) WaitUntilInSardData(InShards []int) map[int]map[string]string
 				for _, server := range servers {
 					end := kv.make_end(server)
 					args := new(GetShardDataArgs)
+					args.Sid = kv.BaseServer.Sid
 					args.ConfigNum = configNum
 					args.Shard = shard
 					reply := new(GetShardDataReply)
@@ -290,6 +350,7 @@ func (kv *ShardKV) WaitUntilInSardData(InShards []int) map[int]map[string]string
 					wg.Done()
 					break
 				}
+				time.Sleep(kv.skvConfig.SrvRPCFrequency)
 			}
 		}()
 	}
@@ -298,8 +359,14 @@ func (kv *ShardKV) WaitUntilInSardData(InShards []int) map[int]map[string]string
 }
 
 type GetShardDataArgs struct {
+	Sid       int
 	ConfigNum int
 	Shard     int
+}
+
+func (args *GetShardDataArgs) String() string {
+	return fmt.Sprintf("GetShardDataArgs{Sid:%d, ConfigNum:%d, Shard:%d}",
+		args.Sid, args.ConfigNum, args.Shard)
 }
 
 type GetShardDataReply struct {
@@ -307,7 +374,16 @@ type GetShardDataReply struct {
 	Data    map[string]string
 }
 
+func (reply *GetShardDataReply) String() string {
+	return fmt.Sprintf("GetShardDataReply{Success:%v, Data:Len=%d}", reply.Success, len(reply.Data))
+}
+
 func (kv *ShardKV) GetShardData(args *GetShardDataArgs, reply *GetShardDataReply) {
+	defer func() {
+		log.Printf("%sSrv %d: GetShardData: args %s, reply %s",
+			kv.skvConfig.BC.LogPrefix, kv.BaseServer.Sid, args.String(), reply.String())
+	}()
+
 	if !kv.BaseServer.CheckLeader() {
 		reply.Success = false
 		return
@@ -327,4 +403,8 @@ func (kv *ShardKV) GetShardData(args *GetShardDataArgs, reply *GetShardDataReply
 
 	reply.Success = true
 	reply.Data = kv.CloneShard(args.Shard)
+}
+
+func (kv *ShardKV) CloneShard(shard int) map[string]string {
+	return cloneStr2StrMap(kv.BaseServer.Store.([]map[string]string)[shard])
 }

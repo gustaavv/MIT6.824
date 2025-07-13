@@ -12,6 +12,8 @@ type KVServer struct {
 	rf         *raft.Raft
 }
 
+var serverIdGenerator atopraft.UidGenerator
+
 // Kill
 // the tester calls Kill() when a KVServer instance won't
 // be needed again. for your convenience, we supply
@@ -48,7 +50,8 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	labgob.Register(KVReplyValue(""))
 
 	kv := new(KVServer)
-	kv.BaseServer = atopraft.StartBaseServer(kv, servers, me, persister, maxraftstate, allowedOps,
+	sid := serverIdGenerator.NextUid()
+	kv.BaseServer = atopraft.StartBaseServer(sid, kv, servers, me, persister, maxraftstate, allowedOps,
 		businessLogic, buildStore, decodeStore, validateRequest, makeKVConfig())
 	kv.rf = kv.BaseServer.Rf
 

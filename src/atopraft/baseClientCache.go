@@ -45,8 +45,10 @@ func (ck *BaseClerk) trimCache() {
 		}
 	}
 	end := time.Now()
-	log.Printf("%sCk %d: trim cache took %.3f seconds (max duration %.3f seconds), delete %v cache items",
-		ck.Config.LogPrefix, ck.Cid, end.Sub(start).Seconds(), ck.Config.CacheTrimMaxDuration.Seconds(), count)
+	if ck.Config.EnableLog {
+		log.Printf("%sCk %d: trim cache took %.3f seconds (max duration %.3f seconds), delete %v cache items",
+			ck.Config.LogPrefix, ck.Cid, end.Sub(start).Seconds(), ck.Config.CacheTrimMaxDuration.Seconds(), count)
+	}
 }
 
 func (ck *BaseClerk) getNextTrimCacheAt() time.Time {

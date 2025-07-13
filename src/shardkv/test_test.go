@@ -1,6 +1,10 @@
 package shardkv
 
-import "6.824/porcupine"
+import (
+	"6.824/porcupine"
+	"6.824/raft"
+	"log"
+)
 import "6.824/models"
 import "testing"
 import "strconv"
@@ -12,6 +16,12 @@ import "math/rand"
 import "io/ioutil"
 
 const linearizabilityCheckTimeout = 1 * time.Second
+
+func out(s string) {
+	if raft.ENABLE_TEST_VERBOSE {
+		log.Println(s)
+	}
+}
 
 func check(t *testing.T, ck *Clerk, key string, value string) {
 	v := ck.Get(key)
@@ -33,7 +43,7 @@ func TestStaticShards(t *testing.T) {
 
 	cfg.join(0)
 	cfg.join(1)
-
+	out("t0")
 	n := 10
 	ka := make([]string, n)
 	va := make([]string, n)
@@ -42,9 +52,11 @@ func TestStaticShards(t *testing.T) {
 		va[i] = randstring(20)
 		ck.Put(ka[i], va[i])
 	}
+	out("t1")
 	for i := 0; i < n; i++ {
 		check(t, ck, ka[i], va[i])
 	}
+	out("t2")
 
 	// make sure that the data really is sharded by
 	// shutting down one shard and checking that some

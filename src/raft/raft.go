@@ -284,9 +284,11 @@ func (rf *Raft) readPersist(stateData []byte, snapshotData []byte) {
 	}
 
 	if snapshotData == nil || len(snapshotData) < 1 {
-		log.Printf("%srestore (1) state: currentTerm: %d, votedFor: %d (2) no snapshot restored",
-			logHeader, rf.currentTerm, votedFor,
-		)
+		if ENABLE_RAFT_LOG {
+			log.Printf("%srestore (1) state: currentTerm: %d, votedFor: %d (2) no snapshot restored",
+				logHeader, rf.currentTerm, votedFor,
+			)
+		}
 		return
 	}
 
@@ -294,16 +296,19 @@ func (rf *Raft) readPersist(stateData []byte, snapshotData []byte) {
 	d = labgob.NewDecoder(r)
 	var snapShot SnapShot
 	if d.Decode(&snapShot) != nil {
-		log.Printf("%serror happens when decoding", logHeader)
+		if ENABLE_RAFT_LOG {
+			log.Printf("%serror happens when decoding", logHeader)
+		}
 	} else {
 		rf.SnapShot = snapShot
 	}
-
-	log.Printf("%srestore (1) state: currentTerm: %d, votedFor: %d (2) snapshot: lastIncludeIndex: %d, lastIncludeTerm: %d",
-		logHeader,
-		rf.currentTerm, votedFor,
-		snapShot.LastIncludedIndex, snapShot.LastIncludedTerm,
-	)
+	if ENABLE_RAFT_LOG {
+		log.Printf("%srestore (1) state: currentTerm: %d, votedFor: %d (2) snapshot: lastIncludeIndex: %d, lastIncludeTerm: %d",
+			logHeader,
+			rf.currentTerm, votedFor,
+			snapShot.LastIncludedIndex, snapShot.LastIncludedTerm,
+		)
+	}
 }
 
 // Start
@@ -338,9 +343,10 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 	rf.log.append(LogEntry{Term: term, Command: command, Index: index})
 	rf.persist(false)
-	log.Printf("inst %d: Start: leader appends a new log entry (index %d) at term %d",
-		rf.me, index, rf.currentTerm)
-
+	if ENABLE_RAFT_LOG {
+		log.Printf("inst %d: Start: leader appends a new log entry (index %d) at term %d",
+			rf.me, index, rf.currentTerm)
+	}
 	if ENABLE_START_SEND_AE {
 		go func() {
 			rf.mu.Lock()
@@ -367,7 +373,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 func (rf *Raft) Kill() {
 	atomic.StoreInt32(&rf.dead, 1)
 	// Your code here, if desired.
-	log.Printf("inst %d: shutting down...", rf.me)
+	if ENABLE_RAFT_LOG {
+		log.Printf("inst %d: shutting down...", rf.me)
+	}
 }
 
 func (rf *Raft) killed() bool {
@@ -417,7 +425,9 @@ func (rf *Raft) applyLogEntry() {
 		// critical section to prevent holding the lock for too long
 		if applyMsg != nil {
 			rf.applyCh <- *applyMsg
-			log.Printf("%s%s applied log index: %v", logHeader, instState, applyMsg.CommandIndex)
+			if ENABLE_RAFT_LOG {
+				log.Printf("%s%s applied log index: %v", logHeader, instState, applyMsg.CommandIndex)
+			}
 			//log.Printf("%s%.3f seconds passed since last applied", logHeader, time.Since(lastRound).Seconds())
 			//lastRound = time.Now()
 		}
@@ -430,7 +440,9 @@ func (rf *Raft) checkStatusTicker() {
 	for rf.killed() == false {
 		time.Sleep(time.Second)
 		rf.mu.Lock()
-		log.Printf("%s%s no dead lock", logHeader, rf.state)
+		if ENABLE_RAFT_LOG {
+			log.Printf("%s%s no dead lock", logHeader, rf.state)
+		}
 		rf.mu.Unlock()
 	}
 }
@@ -503,8 +515,10 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// nextIndex is based on log[], so the init should be after reading persistent state
 	rf.initVolatileLeaderState()
 
-	log.Printf("inst %d: Make: read persist: %s", rf.me, rf.getDataSummary())
-	log.Printf("inst %d: start as follower", rf.me)
+	if ENABLE_RAFT_LOG {
+		log.Printf("inst %d: Make: read persist: %s", rf.me, rf.getDataSummary())
+		log.Printf("inst %d: start as follower", rf.me)
+	}
 
 	go rf.applyLogEntry()
 

@@ -45,8 +45,10 @@ func (rf *Raft) sendAERequestAndHandleReply(peerIndex int, conflictRetries int) 
 
 	if nextIndex := rf.nextIndex[peerIndex]; nextIndex <= rf.SnapShot.LastIncludedIndex {
 		// a lagging follower
-		log.Printf("inst %d: AE Req => IS Req: inst %d's nextIndex %d <= snapshot.LastIncludedIndex %d",
-			rf.me, peerIndex, nextIndex, rf.SnapShot.LastIncludedIndex)
+		if ENABLE_RAFT_LOG {
+			log.Printf("inst %d: AE Req => IS Req: inst %d's nextIndex %d <= snapshot.LastIncludedIndex %d",
+				rf.me, peerIndex, nextIndex, rf.SnapShot.LastIncludedIndex)
+		}
 		rf.mu.Unlock()
 		go rf.sendISRequestAndHandleReply(peerIndex)
 		return
@@ -101,8 +103,10 @@ func (rf *Raft) sendAERequestAndHandleReply(peerIndex int, conflictRetries int) 
 	//log.Printf("%sinst %d reply success: %v", logHeader, peerIndex, reply.Success)
 
 	if reply.Term > rf.currentTerm {
-		log.Printf("%s%s becomes follower because inst %d with higher term: %d -> %d",
-			logHeader, rf.state, peerIndex, rf.currentTerm, reply.Term)
+		if ENABLE_RAFT_LOG {
+			log.Printf("%s%s becomes follower because inst %d with higher term: %d -> %d",
+				logHeader, rf.state, peerIndex, rf.currentTerm, reply.Term)
+		}
 		rf.currentTerm = reply.Term
 		rf.votedFor = -1
 		rf.electionTimeoutAt = getNextElectionTimeout()
@@ -192,8 +196,10 @@ func (rf *Raft) sendAERequestAndHandleReply(peerIndex int, conflictRetries int) 
 				log.Fatalf("%sError: the newly committed log's term is %d, but current term is %d. commitIndex: %d",
 					logHeader, rf.log.get(N).Term, currentTerm, rf.commitIndex)
 			}
-			log.Printf("%sleader commits new logs (commitIndex: %d) at term %d",
-				logHeader, rf.commitIndex, rf.currentTerm)
+			if ENABLE_RAFT_LOG {
+				log.Printf("%sleader commits new logs (commitIndex: %d) at term %d",
+					logHeader, rf.commitIndex, rf.currentTerm)
+			}
 		} else {
 			break
 		}
@@ -229,8 +235,10 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	reply.Term = args.Term
 
 	if args.Term > rf.currentTerm {
-		log.Printf("%s%v becomes follower because leader (inst %d) with higher term: %d -> %d",
-			logHeader, rf.state, args.LeaderId, rf.currentTerm, args.Term)
+		if ENABLE_RAFT_LOG {
+			log.Printf("%s%v becomes follower because leader (inst %d) with higher term: %d -> %d",
+				logHeader, rf.state, args.LeaderId, rf.currentTerm, args.Term)
+		}
 		rf.currentTerm = args.Term
 		rf.votedFor = -1
 		rf.state = STATE_FOLLOWER
@@ -263,15 +271,18 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			if i < len(args.Entries) {
 				newFirstIndex = args.Entries[i].Index
 			}
-			log.Printf("%strim(start) arg entries: len %d -> %d, first log index %d -> %d",
-				logHeader, len(args.Entries), len(args.Entries)-i, oldFirstIndex, newFirstIndex)
-
+			if ENABLE_RAFT_LOG {
+				log.Printf("%strim(start) arg entries: len %d -> %d, first log index %d -> %d",
+					logHeader, len(args.Entries), len(args.Entries)-i, oldFirstIndex, newFirstIndex)
+			}
 			args.Entries = args.Entries[i:]
 			args.PrevLogIndex = rf.SnapShot.LastIncludedIndex
 			args.PrevLogTerm = rf.SnapShot.LastIncludedTerm
 		} else {
-			log.Printf("%sarg.prevLogIndex %d, arg.prevLogTerm %d, snapShot.LastIncludedIndex %d, snapShot.LastIncludedTerm %d",
-				logHeader, args.PrevLogIndex, args.PrevLogTerm, rf.SnapShot.LastIncludedIndex, rf.SnapShot.LastIncludedTerm)
+			if ENABLE_RAFT_LOG {
+				log.Printf("%sarg.prevLogIndex %d, arg.prevLogTerm %d, snapShot.LastIncludedIndex %d, snapShot.LastIncludedTerm %d",
+					logHeader, args.PrevLogIndex, args.PrevLogTerm, rf.SnapShot.LastIncludedIndex, rf.SnapShot.LastIncludedTerm)
+			}
 		}
 	} else {
 		entry := rf.log.get(args.PrevLogIndex)
@@ -279,8 +290,10 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 
 	if len(args.Entries) > 0 && args.Entries[0].Index <= rf.SnapShot.LastIncludedIndex {
-		log.Printf("%swarn: arg first entry index %d <= snapShot.LastIncludedIndex %d",
-			logHeader, args.Entries[0].Index, rf.SnapShot.LastIncludedIndex)
+		if ENABLE_RAFT_LOG {
+			log.Printf("%swarn: arg first entry index %d <= snapShot.LastIncludedIndex %d",
+				logHeader, args.Entries[0].Index, rf.SnapShot.LastIncludedIndex)
+		}
 	}
 
 	if !reply.Success {
@@ -307,8 +320,10 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 					}
 				}
 			}
-			log.Printf("%sconflictIndex: %d, conflictTerm: %d",
-				logHeader, reply.ConflictIndex, reply.ConflictTerm)
+			if ENABLE_RAFT_LOG {
+				log.Printf("%sconflictIndex: %d, conflictTerm: %d",
+					logHeader, reply.ConflictIndex, reply.ConflictTerm)
+			}
 		}
 
 		return
@@ -339,15 +354,19 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 		rf.log.append(entriesToAppend...)
 		rf.lastNewEntryIndex = rf.log.last().Index
-		log.Printf("%sfollower appends log entires (last entry index %d)",
-			logHeader, rf.lastNewEntryIndex)
+		if ENABLE_RAFT_LOG {
+			log.Printf("%sfollower appends log entires (last entry index %d)",
+				logHeader, rf.lastNewEntryIndex)
+		}
 	}
 
 	// #5
 	if args.LeaderCommit > rf.commitIndex && rf.lastNewEntryIndex != -1 {
 		rf.commitIndex = min(args.LeaderCommit, rf.lastNewEntryIndex)
-		log.Printf("%sfollower commits new logs (commitIndex: %d) at term %d",
-			logHeader, rf.commitIndex, rf.currentTerm)
+		if ENABLE_RAFT_LOG {
+			log.Printf("%sfollower commits new logs (commitIndex: %d) at term %d",
+				logHeader, rf.commitIndex, rf.currentTerm)
+		}
 		rf.applyLogEntryMu.Lock()
 		rf.applyLogEntryCond.Broadcast()
 		rf.applyLogEntryMu.Unlock()

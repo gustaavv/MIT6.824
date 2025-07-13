@@ -33,7 +33,7 @@ type SKVPayLoad struct {
 }
 
 func (pl SKVPayLoad) String() string {
-	return fmt.Sprintf("KVPayLoad{ConfigNum: %d, Key:%q, Value:%q}",
+	return fmt.Sprintf("SKVPayLoad{ConfigNum:%d, Key:%q, Value:%q}",
 		pl.ConfigNum, pl.Key, pl.Value)
 }
 

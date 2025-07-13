@@ -34,7 +34,9 @@ const ENABLE_LOG = true
 // LOG_TO_FILE log to file or console
 const LOG_TO_FILE = true
 
-const ENABLE_TEST_VERBOSE = false
+const ENABLE_RAFT_LOG = false
+
+const ENABLE_TEST_VERBOSE = true
 
 const ENABLE_TRACE_ID = false
 
@@ -99,8 +101,9 @@ func validateLogBacktrackingMode() {
 		log.Fatal("invalid log backtracking mode")
 	}
 
-	log.Printf("log backtracking mode: %s", LOG_BACKTRACKING_MODE)
-
+	if ENABLE_RAFT_LOG {
+		log.Printf("log backtracking mode: %s", LOG_BACKTRACKING_MODE)
+	}
 	if LOG_BACKTRACKING_MODE == LOG_BT_TERM_BYPASS {
 		log.Fatalf("unfortunately, this mode is not supported after lab2c. You should switch to other mode")
 	}
@@ -120,15 +123,21 @@ func startCheckGoroutineNumTicker() {
 		return
 	}
 	cgntInited = true
-	log.Printf("start CheckGoroutineNumTicker")
-
+	if ENABLE_RAFT_LOG {
+		log.Printf("start CheckGoroutineNumTicker")
+	}
 	if err := os.Remove(GOROUTINE_NUM_LOG_FILENAME); err != nil {
-		log.Printf("Failed to remove old log file: %v", err)
+		if ENABLE_RAFT_LOG {
+			log.Printf("Failed to remove old log file: %v", err)
+		}
+		return
 	}
 
 	file, err := os.Create(GOROUTINE_NUM_LOG_FILENAME)
 	if err != nil {
-		fmt.Printf("Failed to create log file: %v", err)
+		if ENABLE_RAFT_LOG {
+			log.Printf("Failed to create log file: %v", err)
+		}
 		return
 	}
 
@@ -136,9 +145,13 @@ func startCheckGoroutineNumTicker() {
 		for {
 			time.Sleep(CHECK_GOROUTINE_NUM_FREQUENCY)
 			num := runtime.NumGoroutine()
-			log.Printf("Current Goroutine Num: %d", num)
+			if ENABLE_RAFT_LOG {
+				log.Printf("Current Goroutine Num: %d", num)
+			}
 			if _, err := file.WriteString(fmt.Sprintf("%d\n", num)); err != nil {
-				fmt.Printf("Failed to write to log file: %v", err)
+				if ENABLE_RAFT_LOG {
+					log.Printf("Failed to write to log file: %v", err)
+				}
 			}
 		}
 	}()
