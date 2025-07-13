@@ -316,12 +316,14 @@ func (srv *BaseServer) consumeApplyCh(businessLogic businessLogic) {
 
 		if !applyMsg.CommandValid {
 			srv.Mu.Unlock()
+			srv.ConsumeCondBroadcast()
 			continue
 		}
 
 		// no-op
 		if applyMsg.Command == nil {
 			srv.Mu.Unlock()
+			srv.ConsumeCondBroadcast()
 			continue
 		}
 

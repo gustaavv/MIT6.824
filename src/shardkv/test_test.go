@@ -115,7 +115,7 @@ func TestJoinLeave(t *testing.T) {
 	ck := cfg.makeClient()
 
 	cfg.join(0)
-
+	out("t0")
 	n := 10
 	ka := make([]string, n)
 	va := make([]string, n)
@@ -124,28 +124,29 @@ func TestJoinLeave(t *testing.T) {
 		va[i] = randstring(5)
 		ck.Put(ka[i], va[i])
 	}
+	out("t1")
 	for i := 0; i < n; i++ {
 		check(t, ck, ka[i], va[i])
 	}
-
+	out("t2")
 	cfg.join(1)
-
+	out("t3")
 	for i := 0; i < n; i++ {
 		check(t, ck, ka[i], va[i])
 		x := randstring(5)
 		ck.Append(ka[i], x)
 		va[i] += x
 	}
-
+	out("t4")
 	cfg.leave(0)
-
+	out("t5")
 	for i := 0; i < n; i++ {
 		check(t, ck, ka[i], va[i])
 		x := randstring(5)
 		ck.Append(ka[i], x)
 		va[i] += x
 	}
-
+	out("t6")
 	// allow time for shards to transfer.
 	time.Sleep(1 * time.Second)
 

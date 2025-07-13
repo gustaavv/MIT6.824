@@ -87,90 +87,135 @@ func (kv *ShardKV) queryConfigAndUpdate() {
 	if !kv.BaseServer.CheckLeader() {
 		return
 	}
+
 	kv.BaseServer.Mu.Lock()
 	oldCfg := kv.config
 	// update the config one by one instead of going to the latest one directly
 	nextNum := oldCfg.Num + 1
-	if kv.reConfigStatus != RECONFIG_STATUS_COMMIT {
-		kv.BaseServer.Mu.Unlock()
-		return
-	}
 	kv.BaseServer.Mu.Unlock()
 
 	newCfg := kv.scClerk.BaseQuery(nextNum, -1) // query only once
-
 	if !(newCfg.Num > 0 && newCfg.Num == nextNum) {
 		return
 	}
-	logHeader := fmt.Sprintf("%sSrv %d: group %d: reConfig: nextNum %d: ",
-		kv.skvConfig.BC.LogPrefix, kv.BaseServer.Sid, kv.gid, nextNum)
 
 	// only one goroutine can do the reConfig process
 	kv.reConfigMu.Lock()
 	defer kv.reConfigMu.Unlock()
+
+	// 0. wait until all previous reConfig log entries have been consumed when restarting
+	if !kv.initLogConsumed {
+		index, _, isLeader := kv.BaseServer.Rf.Start(nil)
+		if !isLeader {
+			return
+		}
+		kv.BaseServer.WaitUntilEntryConsumed(index)
+		kv.initLogConsumed = true
+	}
+
+	logHeader := fmt.Sprintf("%sSrv %d: group %d: reConfig: nextNum %d: ",
+		kv.skvConfig.BC.LogPrefix, kv.BaseServer.Sid, kv.gid, nextNum)
+
+	// Compute all information needed for the reConfig
 	allGroups := merge2Groups(oldCfg.Groups, newCfg.Groups)
-
-	// 1. make sure all groups achieve consensus that they are in the same config
-	log.Printf("%swait for other groups to be at least (%d, COMMIT)", logHeader, oldCfg.Num)
-	kv.WaitUntilReConfigConsensus(oldCfg.Num, RECONFIG_STATUS_COMMIT, allGroups)
-	log.Printf("%sall other groups are at least (%d, COMMIT)", logHeader, oldCfg.Num)
-
-	if !kv.BaseServer.CheckLeader() {
-		return
-	}
-	kv.BaseServer.SetUnavailable() // drain all log entries unconsumed
-
-	// 2. Start a new log entry to mark the start of the reConfig
-	args := atopraft.SrvArgs{
-		Cid: -1, Xid: kv.reConfigXidGenerator.NextUid(), Tid: -1, Op: "",
-		PayLoad: ReConfigPayLoad{Config: newCfg, Status: RECONFIG_STATUS_START},
-	}
-	index, _, isLeader := kv.BaseServer.Rf.Start(args)
-	if !isLeader {
-		return
-	}
-	kv.BaseServer.WaitUntilEntryConsumed(index)
-	log.Printf("%sSTART entry consumed", logHeader)
-
-	// 3. Communicate with other groups to get/send shards
 	inShards, outShards := makeShardReConfigInfo(oldCfg.Shards, newCfg.Shards, kv.gid)
-	log.Printf("%sinShards: %v, outShards: %v", logHeader, inShards, outShards)
 	// TODO: optimization: if both inShards and outShards are empty, we can commit directly without communication with other groups
+	log.Printf("%sreConfig info: groups: %v, inShards: %v, outShards: %v, newCfg: %s",
+		logHeader, getGids(allGroups), inShards, outShards, newCfg.String())
 
-	// only send inShards requests, not sending outShards proactively. let other groups request their inShards,
-	// which are this group's outShards
-	inData := kv.WaitUntilInSardData(inShards)
+	if reConfigNum, reConfigStatus := kv.getReConfigTuple(); reConfigNum == oldCfg.Num &&
+		reConfigStatus == RECONFIG_STATUS_COMMIT {
+		// 1. make sure all groups achieve consensus that they are in the same config
+		log.Printf("%swait for other groups to be at least (%d, COMMIT)", logHeader, oldCfg.Num)
+		kv.WaitUntilReConfigConsensus(oldCfg.Num, RECONFIG_STATUS_COMMIT, allGroups)
+		log.Printf("%sall other groups are at least (%d, COMMIT)", logHeader, oldCfg.Num)
 
-	// 4. prepare
-	args = atopraft.SrvArgs{
-		Cid: -1, Xid: kv.reConfigXidGenerator.NextUid(), Tid: -1, Op: "",
-		PayLoad: ReConfigPayLoad{Config: newCfg, Status: RECONFIG_STATUS_PREPARE, InData: inData, OutShards: outShards},
-	}
-	index, _, isLeader = kv.BaseServer.Rf.Start(args)
-	if !isLeader {
-		return
-	}
-	kv.BaseServer.WaitUntilEntryConsumed(index)
-	log.Printf("%sPREPARE entry consumed", logHeader)
+		if !kv.BaseServer.CheckLeader() {
+			return
+		}
+		kv.BaseServer.SetUnavailable() // drain all log entries unconsumed
 
-	// if all other groups are prepared, then sending outShards succeeds.
-	log.Printf("%swait for other groups to be at least (%d, PREPARE)", logHeader, nextNum)
-	kv.WaitUntilReConfigConsensus(nextNum, RECONFIG_STATUS_PREPARE, allGroups)
-	log.Printf("%sall other groups are at least (%d, PREPARE)", logHeader, nextNum)
-	// 5. commit
-	args = atopraft.SrvArgs{
-		Cid: -1, Xid: kv.reConfigXidGenerator.NextUid(), Tid: -1, Op: "",
-		PayLoad: ReConfigPayLoad{Config: newCfg, Status: RECONFIG_STATUS_COMMIT, InData: inData, OutShards: outShards},
+		// 2. Start a new log entry to mark the start of the reConfig
+		args := atopraft.SrvArgs{
+			Cid: -1, Xid: kv.reConfigXidGenerator.NextUid(), Tid: -1, Op: "",
+			PayLoad: ReConfigPayLoad{Config: shardctrler.Config{Num: newCfg.Num}, Status: RECONFIG_STATUS_START},
+		}
+		index, _, isLeader := kv.BaseServer.Rf.Start(args)
+		if !isLeader {
+			return
+		}
+		kv.BaseServer.WaitUntilEntryConsumed(index)
+		log.Printf("%sSTART entry consumed", logHeader)
+	} else {
+		log.Printf("%sskip START phrase, because srv is at (%d, %s)",
+			logHeader, reConfigNum, mapReConfigStatusToString(reConfigStatus))
 	}
-	index, _, isLeader = kv.BaseServer.Rf.Start(args)
-	if !isLeader {
-		return
-	}
-	kv.BaseServer.WaitUntilEntryConsumed(index)
-	log.Printf("%sCOMMIT entry consumed", logHeader)
 
-	kv.BaseServer.SetAvailable()
-	log.Printf("%s reConfig succeeds", logHeader)
+	if reConfigNum, reConfigStatus := kv.getReConfigTuple(); reConfigNum == nextNum &&
+		reConfigStatus == RECONFIG_STATUS_START {
+		// 3. Communicate with other groups to get/send shards
+		// Only send inShards requests, not sending outShards proactively. Let other groups request their inShards,
+		// which are this group's outShards
+		inData := kv.WaitUntilInSardData(inShards)
+
+		// 4. prepare
+		args := atopraft.SrvArgs{
+			Cid: -1, Xid: kv.reConfigXidGenerator.NextUid(), Tid: -1, Op: "",
+			PayLoad: ReConfigPayLoad{Config: shardctrler.Config{Num: newCfg.Num}, Status: RECONFIG_STATUS_PREPARE, InData: inData},
+		}
+		index, _, isLeader := kv.BaseServer.Rf.Start(args)
+		if !isLeader {
+			return
+		}
+		kv.BaseServer.WaitUntilEntryConsumed(index)
+		log.Printf("%sPREPARE entry consumed", logHeader)
+	} else {
+		log.Printf("%sskip PREPARE phrase, because srv is at (%d, %s)",
+			logHeader, reConfigNum, mapReConfigStatusToString(reConfigStatus))
+	}
+
+	if reConfigNum, reConfigStatus := kv.getReConfigTuple(); reConfigNum == nextNum &&
+		reConfigStatus == RECONFIG_STATUS_PREPARE {
+		// if all other groups are prepared, then sending outShards succeeds.
+		log.Printf("%swait for other groups to be at least (%d, PREPARE)", logHeader, nextNum)
+		kv.WaitUntilReConfigConsensus(nextNum, RECONFIG_STATUS_PREPARE, allGroups)
+		log.Printf("%sall other groups are at least (%d, PREPARE)", logHeader, nextNum)
+		// 5. commit
+		args := atopraft.SrvArgs{
+			Cid: -1, Xid: kv.reConfigXidGenerator.NextUid(), Tid: -1, Op: "",
+			PayLoad: ReConfigPayLoad{Config: newCfg, Status: RECONFIG_STATUS_COMMIT, OutShards: outShards},
+		}
+		index, _, isLeader := kv.BaseServer.Rf.Start(args)
+		if !isLeader {
+			return
+		}
+		kv.BaseServer.WaitUntilEntryConsumed(index)
+		log.Printf("%sCOMMIT entry consumed", logHeader)
+	} else {
+		log.Printf("%sskip COMMIT phrase, because srv is at (%d, %s)",
+			logHeader, reConfigNum, mapReConfigStatusToString(reConfigStatus))
+	}
+
+	if reConfigNum, reConfigStatus := kv.getReConfigTuple(); reConfigNum == nextNum &&
+		reConfigStatus == RECONFIG_STATUS_COMMIT {
+		kv.BaseServer.SetAvailable()
+		log.Printf("%sreConfig succeeds", logHeader)
+	} else {
+		log.Printf("%swarn: srv is at (%d, %s)",
+			logHeader, reConfigNum, mapReConfigStatusToString(reConfigStatus))
+	}
+}
+
+func getGids(groups map[int][]string) []int {
+	ans := make([]int, len(groups))
+
+	i := 0
+	for gid := range groups {
+		ans[i] = gid
+		i++
+	}
+
+	return ans
 }
 
 // WaitUntilReConfigConsensus other groups' (num, status) should >= parameters' (num, status)
@@ -201,7 +246,7 @@ func (kv *ShardKV) WaitUntilReConfigConsensus(num int, status int, allGroups map
 					}
 					// note that the value for START, PREPARE and COMMIT statuses are in strict ascending order,
 					// so we can compare like this
-					if (reply.Num >= num) || (reply.Num == num && reply.Status >= status) {
+					if (reply.Num > num) || (reply.Num == num && reply.Status >= status) {
 						loop = false
 						wg.Done()
 						break
@@ -235,11 +280,11 @@ func (reply *ReConfigStatusReply) String() string {
 }
 
 func (kv *ShardKV) ReConfigStatus(args *ReConfigStatusArgs, reply *ReConfigStatusReply) {
-	kv.BaseServer.Mu.Lock()
-	defer kv.BaseServer.Mu.Unlock()
 	defer func() {
-		log.Printf("%sSrv %d: ReConfigStatus: args %s, reply %s",
-			kv.skvConfig.BC.LogPrefix, kv.BaseServer.Sid, args.String(), reply.String())
+		if kv.skvConfig.EnableRPCLog {
+			log.Printf("%sSrv %d: ReConfigStatus: args %s, reply %s",
+				kv.skvConfig.BC.LogPrefix, kv.BaseServer.Sid, args.String(), reply.String())
+		}
 	}()
 	if !kv.BaseServer.CheckLeader() {
 		reply.Success = false
@@ -247,8 +292,7 @@ func (kv *ShardKV) ReConfigStatus(args *ReConfigStatusArgs, reply *ReConfigStatu
 	}
 
 	reply.Success = true
-	reply.Num = kv.reConfigNum
-	reply.Status = kv.reConfigStatus
+	reply.Num, reply.Status = kv.getReConfigTuple()
 }
 
 // makeShardReConfigInfo
@@ -380,8 +424,10 @@ func (reply *GetShardDataReply) String() string {
 
 func (kv *ShardKV) GetShardData(args *GetShardDataArgs, reply *GetShardDataReply) {
 	defer func() {
-		log.Printf("%sSrv %d: GetShardData: args %s, reply %s",
-			kv.skvConfig.BC.LogPrefix, kv.BaseServer.Sid, args.String(), reply.String())
+		if kv.skvConfig.EnableRPCLog {
+			log.Printf("%sSrv %d: GetShardData: args %s, reply %s",
+				kv.skvConfig.BC.LogPrefix, kv.BaseServer.Sid, args.String(), reply.String())
+		}
 	}()
 
 	if !kv.BaseServer.CheckLeader() {

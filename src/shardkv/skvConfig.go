@@ -14,6 +14,8 @@ type SKVConfig struct {
 
 	SrvQueryConfigFrequency time.Duration
 	SrvRPCFrequency         time.Duration
+	// whether to log RPC args and reply
+	EnableRPCLog bool
 
 	/////////////////////////// client parameters /////////////////////////////////
 
@@ -28,7 +30,8 @@ func makeSKVConfig() *SKVConfig {
 	return &SKVConfig{
 		BC:                      baseConfig,
 		SrvQueryConfigFrequency: time.Millisecond * 100,
-		SrvRPCFrequency:         time.Millisecond * 100,
+		SrvRPCFrequency:         time.Millisecond * 10,
+		EnableRPCLog:            true,
 		CkQueryConfigFrequency:  time.Millisecond * 100,
 	}
 }

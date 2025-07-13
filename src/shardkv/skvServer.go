@@ -30,6 +30,15 @@ type ShardKV struct {
 	scClerk              *shardctrler.Clerk
 	reConfigXidGenerator atopraft.UidGenerator
 	reConfigMu           sync.Mutex
+	initLogConsumed      bool
+}
+
+func (kv *ShardKV) getReConfigTuple() (reConfigNum int, reConfigStatus int) {
+	kv.BaseServer.Mu.Lock()
+	defer kv.BaseServer.Mu.Unlock()
+	reConfigNum = kv.reConfigNum
+	reConfigStatus = kv.reConfigStatus
+	return
 }
 
 // Kill
