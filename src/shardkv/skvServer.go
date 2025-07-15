@@ -124,6 +124,21 @@ func businessLogic(srv *atopraft.BaseServer, args atopraft.SrvArgs, reply *atopr
 		payload := args.PayLoad.(SKVPayLoad)
 		store2 := store.Data
 		shard := key2shard(payload.Key)
+
+		if _, ok := store.MyShards[shard]; !ok {
+			reply.Success = false
+			reply.Msg = MSG_NOT_MY_SHARD
+			log.Fatalf("")
+			return
+		}
+
+		if payload.ConfigNum != store.Config.Num {
+			reply.Success = false
+			reply.Msg = MSG_CONFIG_NUM_MISMATCH
+			log.Fatalf("")
+			return
+		}
+
 		switch args.Op {
 		case OP_GET:
 			v, ok := store2[shard][payload.Key]
@@ -141,8 +156,12 @@ func businessLogic(srv *atopraft.BaseServer, args atopraft.SrvArgs, reply *atopr
 			if !ok {
 				v = ""
 			}
-			store2[shard][payload.Key] = v + payload.Value
+			v += payload.Value
+			store2[shard][payload.Key] = v
 			v2 := SKVReplyValue("")
+			if skv.skvConfig.returnValueForAppend {
+				v2 = SKVReplyValue(v)
+			}
 			reply.Value = &v2
 		}
 	case ReConfigPayLoad:
@@ -155,17 +174,19 @@ func businessLogic(srv *atopraft.BaseServer, args atopraft.SrvArgs, reply *atopr
 			store.ReConfigNum++
 			store.ReConfigStatus = RECONFIG_STATUS_START
 			store.SkvUnavailable = true
+			srv.SetUnavailable()
 			log.Printf("%sgroup %d: reConfig: (%d, START)", logHeader, skv.gid, store.ReConfigNum)
 		} else if store.ReConfigStatus == RECONFIG_STATUS_START &&
 			payload.Status == RECONFIG_STATUS_PREPARE &&
 			payload.Config.Num == store.ReConfigNum {
 			// apply inData (adding shards) when preparing
-			for shardNum, shardData := range payload.InData {
+			for shardNum, shardDataReply := range payload.InData {
 				if _, ok := store.MyShards[shardNum]; ok {
 					log.Fatalf("")
 				}
-				store.Data[shardNum] = cloneStr2StrMap(shardData)
+				store.Data[shardNum] = atopraft.CloneStr2StrMap(shardDataReply.Data)
 				store.MyShards[shardNum] = true
+				srv.Session.Update(shardDataReply.ClientSessionList)
 			}
 			store.ReConfigStatus = RECONFIG_STATUS_PREPARE
 			log.Printf("%sgroup %d: reConfig: (%d, PREPARE)", logHeader, skv.gid, store.ReConfigNum)
@@ -183,6 +204,8 @@ func businessLogic(srv *atopraft.BaseServer, args atopraft.SrvArgs, reply *atopr
 			store.Config = payload.Config
 			store.ReConfigStatus = RECONFIG_STATUS_COMMIT
 			store.SkvUnavailable = false
+			srv.SetAvailable()
+			log.Printf("%sstoreData: %v", logHeader, store.Data)
 			log.Printf("%sgroup %d: reConfig: (%d, COMMIT)", logHeader, skv.gid, store.ReConfigNum)
 		} else {
 			// TODO log warning?

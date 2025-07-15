@@ -92,8 +92,8 @@ func (ck *Clerk) queryConfigAndUpdate() {
 		for i, name := range names {
 			servers[i] = ck.make_end(name)
 		}
-		cid := shardctrler.ClerkIdGenerator.NextUid()
-		ck.skvClerkMap[gid] = atopraft.MakeBaseClerk(ck, cid, servers, baseConfig, "ShardKV", handleFailureMsg)
+		ck.skvClerkMap[gid] = atopraft.MakeBaseClerk(ck, ck.Cid, servers, baseConfig, "ShardKV",
+			handleFailureMsg)
 	}
 	ck.config = newCfg
 }
@@ -129,13 +129,14 @@ func (ck *Clerk) doRequest(key string, value string, op string) string {
 	}
 	logHeader := fmt.Sprintf("%sCk %d: xid %d: ",
 		ck.skvConfig.BC.LogPrefix, ck.Cid, xid)
-	log.Printf("%sstart new %s request, key %q", logHeader, op, key)
+	log.Printf("%sstart new %s request, key %q, value %q", logHeader, op, key, value)
 
 	for !ck.Killed() {
 		ck.mu.Lock()
+		ck.queryConfigAndUpdate()
 		gid := ck.config.Shards[shard]
 		gck, ok := ck.skvClerkMap[gid]
-		if !ok {
+		if !ok { // this happens when configNum is 0
 			ck.mu.Unlock()
 			time.Sleep(ck.skvConfig.BC.TickerFrequency)
 			continue
@@ -162,11 +163,11 @@ func (ck *Clerk) Get(key string) string {
 	return ck.doRequest(key, "", OP_GET)
 }
 
-func (ck *Clerk) Put(key string, value string) {
-	ck.doRequest(key, value, OP_PUT)
+func (ck *Clerk) Put(key string, value string) string {
+	return ck.doRequest(key, value, OP_PUT)
 }
-func (ck *Clerk) Append(key string, value string) {
-	ck.doRequest(key, value, OP_APPEND)
+func (ck *Clerk) Append(key string, value string) string {
+	return ck.doRequest(key, value, OP_APPEND)
 }
 
 func handleFailureMsg(ck *atopraft.BaseClerk, msg string, logHeader string) {
@@ -176,14 +177,14 @@ func handleFailureMsg(ck *atopraft.BaseClerk, msg string, logHeader string) {
 		log.Printf("%sconfig number mismatch", logHeader)
 		go func() {
 			skvCk.mu.Lock()
-			skvCk.queryConfigAndUpdate()
+			//skvCk.queryConfigAndUpdate()
 			skvCk.mu.Unlock()
 		}()
 	case MSG_NOT_MY_SHARD:
 		log.Printf("%swrong shard server mapping", logHeader)
 		go func() {
 			skvCk.mu.Lock()
-			skvCk.queryConfigAndUpdate()
+			//skvCk.queryConfigAndUpdate()
 			skvCk.mu.Unlock()
 		}()
 	}

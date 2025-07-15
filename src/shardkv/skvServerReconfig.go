@@ -2,6 +2,7 @@ package shardkv
 
 import (
 	"6.824/atopraft"
+	"6.824/labrpc"
 	"6.824/shardctrler"
 	"fmt"
 	"log"
@@ -31,7 +32,7 @@ func mapReConfigStatusToString(status int) string {
 type ReConfigPayLoad struct {
 	Status int
 	// shard num -> shard data
-	InData map[int]map[string]string
+	InData map[int]GetShardDataReply
 	// shard num
 	OutShards []int
 	Config    shardctrler.Config
@@ -233,10 +234,13 @@ func (kv *ShardKV) WaitUntilReConfigConsensus(num int, status int, allGroups map
 		servers := servers
 		go func() {
 			loop := true
+			ends := make([]*labrpc.ClientEnd, len(servers))
+			for i, serverName := range servers {
+				ends[i] = kv.make_end(serverName)
+			}
 			for loop {
 				// TODO: use timeout and goroutines to do RPC
-				for _, serverName := range servers {
-					end := kv.make_end(serverName)
+				for _, end := range ends {
 					args := new(ReConfigStatusArgs)
 					args.Sid = kv.BaseServer.Sid
 					reply := new(ReConfigStatusReply)
@@ -347,15 +351,16 @@ func merge2Groups(oldGroups map[int][]string, newGroups map[int][]string) map[in
 	return ans
 }
 
-func (kv *ShardKV) WaitUntilInSardData(InShards []int) map[int]map[string]string {
+func (kv *ShardKV) WaitUntilInSardData(InShards []int) map[int]GetShardDataReply {
 	kv.BaseServer.Mu.Lock()
 	store := kv.BaseServer.Store.(SKVStore)
 	configNum := store.Config.Num
+	reConfigNum := store.ReConfigNum
 	groups := store.Config.Groups
 	shards := store.Config.Shards
 	kv.BaseServer.Mu.Unlock()
 
-	ans := make(map[int]map[string]string)
+	ans := make(map[int]GetShardDataReply)
 	var ansMu sync.Mutex
 	var wg sync.WaitGroup
 	wg.Add(len(InShards))
@@ -365,22 +370,32 @@ func (kv *ShardKV) WaitUntilInSardData(InShards []int) map[int]map[string]string
 		go func() {
 			if shards[shard] == 0 {
 				ansMu.Lock()
-				ans[shard] = make(map[string]string)
+				ans[shard] = GetShardDataReply{
+					Success:           true,
+					Data:              make(map[string]string),
+					ClientSessionList: make([]atopraft.ClientSessionTemp, 0),
+				}
 				ansMu.Unlock()
 				wg.Done()
 				return
 			}
 
 			servers := groups[shards[shard]]
+			ends := make([]*labrpc.ClientEnd, len(servers))
+			for i, serverName := range servers {
+				ends[i] = kv.make_end(serverName)
+			}
 			loop := true
 			for loop {
 				// TODO: use timeout and goroutines to do RPC
-				for _, server := range servers {
-					end := kv.make_end(server)
+				for _, end := range ends {
 					args := new(GetShardDataArgs)
 					args.Sid = kv.BaseServer.Sid
 					args.ConfigNum = configNum
 					args.Shard = shard
+					// the servers return their shards to this kv should be at least (reConfigNum, START)
+					args.ReConfigNum = reConfigNum
+					args.ReConfigStatus = RECONFIG_STATUS_START
 					reply := new(GetShardDataReply)
 					b := end.Call("ShardKV.GetShardData", args, reply)
 
@@ -389,7 +404,7 @@ func (kv *ShardKV) WaitUntilInSardData(InShards []int) map[int]map[string]string
 					}
 
 					ansMu.Lock()
-					ans[shard] = reply.Data
+					ans[shard] = *reply
 					ansMu.Unlock()
 					loop = false
 					wg.Done()
@@ -404,9 +419,11 @@ func (kv *ShardKV) WaitUntilInSardData(InShards []int) map[int]map[string]string
 }
 
 type GetShardDataArgs struct {
-	Sid       int
-	ConfigNum int
-	Shard     int
+	Sid            int
+	ConfigNum      int
+	Shard          int
+	ReConfigNum    int
+	ReConfigStatus int
 }
 
 func (args *GetShardDataArgs) String() string {
@@ -415,12 +432,13 @@ func (args *GetShardDataArgs) String() string {
 }
 
 type GetShardDataReply struct {
-	Success bool
-	Data    map[string]string
+	Success           bool
+	Data              map[string]string
+	ClientSessionList []atopraft.ClientSessionTemp
 }
 
 func (reply *GetShardDataReply) String() string {
-	return fmt.Sprintf("GetShardDataReply{Success:%v, Data:Len=%d}", reply.Success, len(reply.Data))
+	return fmt.Sprintf("GetShardDataReply{Success:%v, Data:Len=%d,%v}", reply.Success, len(reply.Data), reply.Data)
 }
 
 func (kv *ShardKV) GetShardData(args *GetShardDataArgs, reply *GetShardDataReply) {
@@ -432,6 +450,13 @@ func (kv *ShardKV) GetShardData(args *GetShardDataArgs, reply *GetShardDataReply
 	}()
 
 	if !kv.BaseServer.CheckLeader() {
+		reply.Success = false
+		return
+	}
+
+	reConfigNum, reConfigStatus := kv.getReConfigTuple()
+	if !((reConfigNum > args.ReConfigNum) ||
+		(reConfigNum == args.ReConfigNum && reConfigStatus >= args.ReConfigStatus)) {
 		reply.Success = false
 		return
 	}
@@ -450,8 +475,9 @@ func (kv *ShardKV) GetShardData(args *GetShardDataArgs, reply *GetShardDataReply
 
 	reply.Success = true
 	reply.Data = kv.CloneShard(args.Shard)
+	reply.ClientSessionList = kv.BaseServer.Session.Clone()
 }
 
 func (kv *ShardKV) CloneShard(shard int) map[string]string {
-	return cloneStr2StrMap(kv.BaseServer.Store.(SKVStore).Data[shard])
+	return atopraft.CloneStr2StrMap(kv.BaseServer.Store.(SKVStore).Data[shard])
 }

@@ -323,7 +323,7 @@ func TestConcurrent1(t *testing.T) {
 	ck := cfg.makeClient()
 
 	cfg.join(0)
-
+	out("t0")
 	n := 10
 	ka := make([]string, n)
 	va := make([]string, n)
@@ -332,6 +332,7 @@ func TestConcurrent1(t *testing.T) {
 		va[i] = randstring(5)
 		ck.Put(ka[i], va[i])
 	}
+	out("t1")
 
 	var done int32
 	ch := make(chan bool)
@@ -475,15 +476,17 @@ func TestConcurrent3(t *testing.T) {
 	ck := cfg.makeClient()
 
 	cfg.join(0)
+	out("t0")
 
 	n := 10
 	ka := make([]string, n)
 	va := make([]string, n)
 	for i := 0; i < n; i++ {
 		ka[i] = strconv.Itoa(i)
-		va[i] = randstring(1)
+		va[i] = fmt.Sprintf("|%d|%v", ck.Cid, randstring(1))
 		ck.Put(ka[i], va[i])
 	}
+	out("t1")
 
 	var done int32
 	ch := make(chan bool)
@@ -491,9 +494,13 @@ func TestConcurrent3(t *testing.T) {
 	ff := func(i int, ck1 *Clerk) {
 		defer func() { ch <- true }()
 		for atomic.LoadInt32(&done) == 0 {
-			x := randstring(1)
-			ck1.Append(ka[i], x)
+			x := fmt.Sprintf("|%d|%v", ck1.Cid, randstring(1))
+			resp := ck1.Append(ka[i], x)
 			va[i] += x
+			if ck1.skvConfig.returnValueForAppend && resp != va[i] {
+				t.Fatalf("key %q, shard %d, resp %q != va %q",
+					ka[i], key2shard(ka[i]), resp, va[i])
+			}
 		}
 	}
 
@@ -501,36 +508,46 @@ func TestConcurrent3(t *testing.T) {
 		ck1 := cfg.makeClient()
 		go ff(i, ck1)
 	}
+	out("t2")
 
+	t2i := 0
 	t0 := time.Now()
 	for time.Since(t0) < 12*time.Second {
+		out("t2:" + strconv.Itoa(t2i) + " start loop")
 		cfg.join(2)
 		cfg.join(1)
+		out("t2:" + strconv.Itoa(t2i) + " join group 1&2")
 		time.Sleep(time.Duration(rand.Int()%900) * time.Millisecond)
 		cfg.ShutdownGroup(0)
 		cfg.ShutdownGroup(1)
 		cfg.ShutdownGroup(2)
+		out("t2:" + strconv.Itoa(t2i) + " shutdown all groups")
 		cfg.StartGroup(0)
 		cfg.StartGroup(1)
 		cfg.StartGroup(2)
+		out("t2:" + strconv.Itoa(t2i) + " start all groups")
 
 		time.Sleep(time.Duration(rand.Int()%900) * time.Millisecond)
 		cfg.leave(1)
 		cfg.leave(2)
+		out("t2:" + strconv.Itoa(t2i) + " leave group 1&2")
 		time.Sleep(time.Duration(rand.Int()%900) * time.Millisecond)
+		out("t2:" + strconv.Itoa(t2i) + " end loop")
+		t2i++
 	}
 
+	out("t3")
 	time.Sleep(2 * time.Second)
 
 	atomic.StoreInt32(&done, 1)
 	for i := 0; i < n; i++ {
 		<-ch
 	}
-
+	out("t4")
 	for i := 0; i < n; i++ {
 		check(t, ck, ka[i], va[i])
 	}
-
+	out("t5")
 	fmt.Printf("  ... Passed\n")
 }
 
@@ -585,16 +602,16 @@ func TestUnreliable2(t *testing.T) {
 	ck := cfg.makeClient()
 
 	cfg.join(0)
-
+	out("t0")
 	n := 10
 	ka := make([]string, n)
 	va := make([]string, n)
 	for i := 0; i < n; i++ {
 		ka[i] = strconv.Itoa(i) // ensure multiple shards
-		va[i] = randstring(5)
+		va[i] = fmt.Sprintf("|%d|%v", ck.Cid, randstring(5))
 		ck.Put(ka[i], va[i])
 	}
-
+	out("t1")
 	var done int32
 	ch := make(chan bool)
 
@@ -602,36 +619,48 @@ func TestUnreliable2(t *testing.T) {
 		defer func() { ch <- true }()
 		ck1 := cfg.makeClient()
 		for atomic.LoadInt32(&done) == 0 {
-			x := randstring(5)
-			ck1.Append(ka[i], x)
+			x := fmt.Sprintf("|%d|%v", ck1.Cid, randstring(5))
+			resp := ck1.Append(ka[i], x)
 			va[i] += x
+
+			if ck1.skvConfig.returnValueForAppend && resp != va[i] {
+				t.Fatalf("key %q, shard %d, resp %q != va %q",
+					ka[i], key2shard(ka[i]), resp, va[i])
+			}
 		}
 	}
 
 	for i := 0; i < n; i++ {
 		go ff(i)
 	}
-
+	out("t2")
 	time.Sleep(150 * time.Millisecond)
 	cfg.join(1)
+	out("t3")
 	time.Sleep(500 * time.Millisecond)
 	cfg.join(2)
+	out("t4")
 	time.Sleep(500 * time.Millisecond)
 	cfg.leave(0)
+	out("t5")
 	time.Sleep(500 * time.Millisecond)
 	cfg.leave(1)
+	out("t6")
 	time.Sleep(500 * time.Millisecond)
 	cfg.join(1)
+	out("t7")
 	cfg.join(0)
+	out("t8")
 
 	time.Sleep(2 * time.Second)
 
 	atomic.StoreInt32(&done, 1)
+	out("t9")
 	cfg.net.Reliable(true)
 	for i := 0; i < n; i++ {
 		<-ch
 	}
-
+	out("t10")
 	for i := 0; i < n; i++ {
 		check(t, ck, ka[i], va[i])
 	}

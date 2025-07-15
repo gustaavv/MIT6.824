@@ -31,7 +31,7 @@ type BaseServer struct {
 	Config             *BaseConfig
 	persister          *raft.Persister
 	Store              interface{}
-	session            session
+	Session            session
 	startAt            time.Time
 	LastConsumedIndex  int
 	lastReadSnapshotAt time.Time
@@ -58,7 +58,7 @@ func (srv *BaseServer) getDataSummary() string {
 	srv.Mu.Lock()
 	defer srv.Mu.Unlock()
 	return fmt.Sprintf("data summary: LastConsumedIndex: %d, %s",
-		srv.LastConsumedIndex, srv.session.String(srv.Config))
+		srv.LastConsumedIndex, srv.Session.String(srv.Config))
 }
 
 func (srv *BaseServer) SetUnavailable() {
@@ -104,7 +104,7 @@ func (srv *BaseServer) Kill() {
 	if srv.Config.EnableLog {
 		log.Printf("%sshutting down...", logHeader)
 	}
-	srv.session.broadcastAllClientSessions()
+	srv.Session.broadcastAllClientSessions()
 	if srv.Config.EnableLog {
 		log.Printf("%sshutting down all handler goroutines", logHeader)
 	}
@@ -149,7 +149,7 @@ func StartBaseServer(sid int, atopSrv interface{}, servers []*labrpc.ClientEnd, 
 	srv.Config = config
 	srv.persister = persister
 	srv.Store = buildStore()
-	srv.session.clientSessionMap = make(map[int]*clientSession)
+	srv.Session.clientSessionMap = make(map[int]*clientSession)
 	srv.startAt = time.Now()
 	srv.allowedOps = make(map[string]bool)
 	for _, op := range Ops {
@@ -231,7 +231,7 @@ func (srv *BaseServer) HandleRequest(args *SrvArgs, reply *SrvReply) {
 		return
 	}
 
-	cs := srv.session.getClientSession(args.Cid)
+	cs := srv.Session.getClientSession(args.Cid)
 
 	// validate xid and use cache
 	lastXid, lastResp := cs.getLastXidAndResp()
@@ -329,7 +329,7 @@ func (srv *BaseServer) consumeApplyCh(businessLogic businessLogic) {
 		}
 
 		args := applyMsg.Command.(SrvArgs)
-		cs := srv.session.getClientSession(args.Cid)
+		cs := srv.Session.getClientSession(args.Cid)
 		lastXid, _ := cs.getLastXidAndResp()
 
 		logHeader := fmt.Sprintf("%sSrv %d: consume applyMsg: index: %d: ck %d: xid %d: ",
@@ -343,7 +343,9 @@ func (srv *BaseServer) consumeApplyCh(businessLogic businessLogic) {
 
 			result := "succeeds"
 			if reply.Success {
-				cs.setLastXidAndResp(args.Xid, reply)
+				if args.Xid >= 0 {
+					cs.setLastXidAndResp(args.Xid, reply)
+				}
 			} else {
 				result = "fails"
 			}
@@ -415,12 +417,6 @@ func (srv *BaseServer) checkRaftStateSizeTicker() {
 	}
 }
 
-type ClientSessionTemp struct {
-	Cid      int
-	LastXid  int
-	LastResp SrvReply
-}
-
 // This function must be called in a critical section
 func (srv *BaseServer) takeSnapshot() []byte {
 	logHeader := fmt.Sprintf("%sSrv %d: takeSnapshot: ", srv.Config.LogPrefix, srv.Sid)
@@ -431,29 +427,12 @@ func (srv *BaseServer) takeSnapshot() []byte {
 		log.Fatalf("%sencode srv.Store err: %v", logHeader, err)
 	}
 
-	clientSessionList := make([]ClientSessionTemp, 0)
-	srv.session.mu.Lock()
-	for _, cs := range srv.session.clientSessionMap {
-		var value interface{} = nil
-		if cs.lastResp.Value != nil {
-			value = cs.lastResp.Value.(ReplyValue).Clone()
-		}
-		clientSessionList = append(clientSessionList, ClientSessionTemp{
-			Cid:     cs.cid,
-			LastXid: cs.lastXid,
-			LastResp: SrvReply{
-				Success: cs.lastResp.Success,
-				Msg:     cs.lastResp.Msg,
-				Value:   value,
-			},
-		})
-	}
-	srv.session.mu.Unlock()
+	clientSessionList := srv.Session.Clone()
 
 	if err := e.Encode(clientSessionList); err != nil {
-		log.Fatalf("%sencode srv.session err: %v", logHeader, err)
+		log.Fatalf("%sencode srv.Session err: %v", logHeader, err)
 	}
-	//log.Printf("%skv.Store: %s\n\nsrv.session: %s", logHeader, srv.Store, srv.session.String())
+	//log.Printf("%skv.Store: %s\n\nsrv.Session: %s", logHeader, srv.Store, srv.Session.String())
 
 	ans := w.Bytes()
 	return ans
@@ -494,26 +473,7 @@ func (srv *BaseServer) installSnapshot(snapshotData []byte, lastIncludedIndex in
 		log.Fatalf("%serror happens when reading snapshot", logHeader)
 	} else {
 		srv.Store = store
-
-		srv.session.mu.Lock()
-		srv.session.clientSessionMap = make(map[int]*clientSession)
-		for _, cst := range clientSessionList {
-			cs := makeClientSession(cst.Cid)
-			cs.lastXid = cst.LastXid
-			var value interface{} = nil
-			if cst.LastResp.Value != nil {
-				value = cst.LastResp.Value.(ReplyValue).Clone()
-			}
-			// don't know why this is wrong: cs.lastResp = &cst.LastResp
-			// maybe related to Go's memory model. just manually copy the fields
-			cs.lastResp = &SrvReply{
-				Success: cst.LastResp.Success,
-				Msg:     cst.LastResp.Msg,
-				Value:   value,
-			}
-			srv.session.clientSessionMap[cs.cid] = cs
-		}
-		srv.session.mu.Unlock()
+		srv.Session.Update(clientSessionList)
 	}
 
 	srv.LastConsumedIndex = lastIncludedIndex
@@ -534,8 +494,8 @@ func (srv *BaseServer) checkStatusTicker() {
 
 		srv.Mu.Lock()
 		srv.Mu.Unlock()
-		srv.session.mu.Lock()
-		srv.session.mu.Unlock()
+		srv.Session.mu.Lock()
+		srv.Session.mu.Unlock()
 		if srv.Config.EnableLog {
 			log.Printf("%sSrv %d: check status: no deadlock", srv.Config.LogPrefix, srv.Sid)
 		}

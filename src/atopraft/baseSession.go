@@ -100,3 +100,62 @@ func (s *session) broadcastAllClientSessions() {
 		cs.condMu.Unlock()
 	}
 }
+
+type ClientSessionTemp struct {
+	Cid      int
+	LastXid  int
+	LastResp SrvReply
+}
+
+func (cst *ClientSessionTemp) makeClientSession() *clientSession {
+	cs := makeClientSession(cst.Cid)
+	cs.lastXid = cst.LastXid
+	var value interface{} = nil
+	if cst.LastResp.Value != nil {
+		value = cst.LastResp.Value.(ReplyValue).Clone()
+	}
+	cs.lastResp = &SrvReply{
+		Success: cst.LastResp.Success,
+		Msg:     cst.LastResp.Msg,
+		Value:   value,
+	}
+	return cs
+}
+
+func (s *session) Clone() []ClientSessionTemp {
+	clientSessionList := make([]ClientSessionTemp, 0)
+	s.mu.Lock()
+	for _, cs := range s.clientSessionMap {
+		var value interface{} = nil
+		if cs.lastResp.Value != nil {
+			value = cs.lastResp.Value.(ReplyValue).Clone()
+		}
+		clientSessionList = append(clientSessionList, ClientSessionTemp{
+			Cid:     cs.cid,
+			LastXid: cs.lastXid,
+			LastResp: SrvReply{
+				Success: cs.lastResp.Success,
+				Msg:     cs.lastResp.Msg,
+				Value:   value,
+			},
+		})
+	}
+	s.mu.Unlock()
+	return clientSessionList
+}
+
+func (s *session) Update(clientSessionList []ClientSessionTemp) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, cst := range clientSessionList {
+		cs, ok := s.clientSessionMap[cst.Cid]
+		if ok {
+			if xid, _ := cs.getLastXidAndResp(); xid < cst.LastXid {
+				csCopy := cst.makeClientSession() // mainly to copy lastResp
+				cs.setLastXidAndResp(csCopy.lastXid, *csCopy.lastResp)
+			}
+		} else {
+			s.clientSessionMap[cst.Cid] = cst.makeClientSession()
+		}
+	}
+}

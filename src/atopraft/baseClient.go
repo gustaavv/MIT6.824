@@ -53,7 +53,8 @@ func (ck *BaseClerk) Killed() bool {
 	return z == 1
 }
 
-func MakeBaseClerk(atopCk interface{}, cid int, servers []*labrpc.ClientEnd, config *BaseConfig, rpcServerName string, handleFailureMsg handleFailureMsg) *BaseClerk {
+func MakeBaseClerk(atopCk interface{}, cid int, servers []*labrpc.ClientEnd, config *BaseConfig, rpcServerName string,
+	handleFailureMsg handleFailureMsg) *BaseClerk {
 	ck := new(BaseClerk)
 	ck.Servers = servers
 	ck.AtopCk = atopCk

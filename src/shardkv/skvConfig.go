@@ -16,6 +16,8 @@ type SKVConfig struct {
 	SrvRPCFrequency         time.Duration
 	// whether to log RPC args and reply
 	EnableRPCLog bool
+	// whether the result of append operation is returned
+	returnValueForAppend bool
 
 	/////////////////////////// client parameters /////////////////////////////////
 
@@ -26,12 +28,15 @@ func makeSKVConfig() *SKVConfig {
 	baseConfig := atopraft.NewBaseConfig()
 	baseConfig.LogPrefix = "SKV"
 	baseConfig.EnableCheckStatusTicker = false
+	baseConfig.QueryServerStatusFrequency = 500 * time.Millisecond
+	//baseConfig.EnableLogValue = true
 
 	return &SKVConfig{
 		BC:                      baseConfig,
-		SrvQueryConfigFrequency: time.Millisecond * 25,
-		SrvRPCFrequency:         time.Millisecond * 1,
+		SrvQueryConfigFrequency: time.Millisecond * 100,
+		SrvRPCFrequency:         time.Millisecond * 2,
 		EnableRPCLog:            false,
-		CkQueryConfigFrequency:  time.Millisecond * 10,
+		returnValueForAppend:    false,
+		CkQueryConfigFrequency:  time.Millisecond * 100000000,
 	}
 }
