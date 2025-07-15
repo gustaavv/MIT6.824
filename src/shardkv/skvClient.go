@@ -133,7 +133,6 @@ func (ck *Clerk) doRequest(key string, value string, op string) string {
 
 	for !ck.Killed() {
 		ck.mu.Lock()
-		ck.queryConfigAndUpdate()
 		gid := ck.config.Shards[shard]
 		gck, ok := ck.skvClerkMap[gid]
 		if !ok { // this happens when configNum is 0
@@ -149,7 +148,6 @@ func (ck *Clerk) doRequest(key string, value string, op string) string {
 			return string(replyValue.(SKVReplyValue))
 		}
 	}
-	log.Fatalf("UNREACHABLE")
 	return ""
 }
 
@@ -171,21 +169,10 @@ func (ck *Clerk) Append(key string, value string) string {
 }
 
 func handleFailureMsg(ck *atopraft.BaseClerk, msg string, logHeader string) {
-	skvCk := ck.AtopCk.(*Clerk)
 	switch msg {
 	case MSG_CONFIG_NUM_MISMATCH:
 		log.Printf("%sconfig number mismatch", logHeader)
-		go func() {
-			skvCk.mu.Lock()
-			//skvCk.queryConfigAndUpdate()
-			skvCk.mu.Unlock()
-		}()
 	case MSG_NOT_MY_SHARD:
 		log.Printf("%swrong shard server mapping", logHeader)
-		go func() {
-			skvCk.mu.Lock()
-			//skvCk.queryConfigAndUpdate()
-			skvCk.mu.Unlock()
-		}()
 	}
 }

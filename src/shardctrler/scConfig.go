@@ -13,6 +13,5 @@ func makeSCConfig() *atopraft.BaseConfig {
 	config.EnableLog = false
 	config.EnableCheckStatusTicker = false
 	config.QueryServerStatusFrequency = 500 * time.Millisecond
-	//config.EnableLogValue = true
 	return config
 }

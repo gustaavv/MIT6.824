@@ -29,7 +29,6 @@ func makeSKVConfig() *SKVConfig {
 	baseConfig.LogPrefix = "SKV"
 	baseConfig.EnableCheckStatusTicker = false
 	baseConfig.QueryServerStatusFrequency = 500 * time.Millisecond
-	//baseConfig.EnableLogValue = true
 
 	return &SKVConfig{
 		BC:                      baseConfig,
@@ -37,6 +36,6 @@ func makeSKVConfig() *SKVConfig {
 		SrvRPCFrequency:         time.Millisecond * 2,
 		EnableRPCLog:            false,
 		returnValueForAppend:    false,
-		CkQueryConfigFrequency:  time.Millisecond * 100000000,
+		CkQueryConfigFrequency:  time.Millisecond * 50,
 	}
 }

@@ -120,16 +120,19 @@ func (kv *ShardKV) queryConfigAndUpdate() {
 	// Compute all information needed for the reConfig
 	allGroups := merge2Groups(oldCfg.Groups, newCfg.Groups)
 	inShards, outShards := makeShardReConfigInfo(oldCfg.Shards, newCfg.Shards, kv.gid)
-	// TODO: optimization: if both inShards and outShards are empty, we can commit directly without communication with other groups
+	hasInShards := len(inShards) > 0
+	hasOutShards := len(outShards) > 0
 	log.Printf("%sreConfig info: groups: %v, inShards: %v, outShards: %v, newCfg: %s",
 		logHeader, getGids(allGroups), inShards, outShards, newCfg.String())
 
 	if reConfigNum, reConfigStatus := kv.getReConfigTuple(); reConfigNum == oldCfg.Num &&
 		reConfigStatus == RECONFIG_STATUS_COMMIT {
-		// 1. make sure all groups achieve consensus that they are in the same config
-		log.Printf("%swait for other groups to be at least (%d, COMMIT)", logHeader, oldCfg.Num)
-		kv.WaitUntilReConfigConsensus(oldCfg.Num, RECONFIG_STATUS_COMMIT, allGroups)
-		log.Printf("%sall other groups are at least (%d, COMMIT)", logHeader, oldCfg.Num)
+		if hasInShards || hasOutShards {
+			// 1. make sure all groups achieve consensus that they are in the same config
+			log.Printf("%swait for other groups to be at least (%d, COMMIT)", logHeader, oldCfg.Num)
+			kv.WaitUntilReConfigConsensus(oldCfg.Num, RECONFIG_STATUS_COMMIT, allGroups)
+			log.Printf("%sall other groups are at least (%d, COMMIT)", logHeader, oldCfg.Num)
+		}
 
 		if !kv.BaseServer.CheckLeader() {
 			return
@@ -177,10 +180,13 @@ func (kv *ShardKV) queryConfigAndUpdate() {
 
 	if reConfigNum, reConfigStatus := kv.getReConfigTuple(); reConfigNum == nextNum &&
 		reConfigStatus == RECONFIG_STATUS_PREPARE {
-		// if all other groups are prepared, then sending outShards succeeds.
-		log.Printf("%swait for other groups to be at least (%d, PREPARE)", logHeader, nextNum)
-		kv.WaitUntilReConfigConsensus(nextNum, RECONFIG_STATUS_PREPARE, allGroups)
-		log.Printf("%sall other groups are at least (%d, PREPARE)", logHeader, nextNum)
+		if hasOutShards {
+			// if all other groups are prepared, then sending outShards succeeds.
+			log.Printf("%swait for other groups to be at least (%d, PREPARE)", logHeader, nextNum)
+			kv.WaitUntilReConfigConsensus(nextNum, RECONFIG_STATUS_PREPARE, allGroups)
+			log.Printf("%sall other groups are at least (%d, PREPARE)", logHeader, nextNum)
+		}
+
 		// 5. commit
 		args := atopraft.SrvArgs{
 			Cid: -1, Xid: -1, Tid: -1, Op: "",
@@ -449,10 +455,8 @@ func (kv *ShardKV) GetShardData(args *GetShardDataArgs, reply *GetShardDataReply
 		}
 	}()
 
-	if !kv.BaseServer.CheckLeader() {
-		reply.Success = false
-		return
-	}
+	// no need to check leadership, because the reConfig tuple is enough to ensure
+	// the data is the latest, which pretty resembles ZooKeeper's sync()
 
 	reConfigNum, reConfigStatus := kv.getReConfigTuple()
 	if !((reConfigNum > args.ReConfigNum) ||
@@ -468,8 +472,6 @@ func (kv *ShardKV) GetShardData(args *GetShardDataArgs, reply *GetShardDataReply
 		reply.Success = false
 		return
 	}
-
-	// TODO: validate args.ConfigNum?
 
 	// We do not verify whether the requester should get data in this reConfig
 
