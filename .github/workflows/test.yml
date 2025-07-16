@@ -34,6 +34,8 @@ jobs:
             command: cd src/kvraft && time go test -race
           - name: Lab 4A
             command: cd src/shardctrler && time go test -race
+          - name: Lab 4B
+            command: cd src/shardkv && time go test -race
 
       fail-fast: false
 
