@@ -1,6 +1,10 @@
 package raft
 
-import "sync"
+import (
+	"errors"
+	"os"
+	"sync"
+)
 
 func min(a, b int) int {
 	if a < b {
@@ -14,6 +18,11 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func fileExists(filename string) bool {
+	_, err := os.Stat(filename)
+	return !errors.Is(err, os.ErrNotExist)
 }
 
 ////////////////////////////////////////////////////////

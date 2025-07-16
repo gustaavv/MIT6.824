@@ -126,11 +126,18 @@ func startCheckGoroutineNumTicker() {
 	if ENABLE_RAFT_LOG {
 		log.Printf("start CheckGoroutineNumTicker")
 	}
-	if err := os.Remove(GOROUTINE_NUM_LOG_FILENAME); err != nil {
-		if ENABLE_RAFT_LOG {
-			log.Printf("Failed to remove old log file: %v", err)
+
+	if fileExists(GOROUTINE_NUM_LOG_FILENAME) {
+		if err := os.Remove(GOROUTINE_NUM_LOG_FILENAME); err != nil {
+			if ENABLE_RAFT_LOG {
+				log.Printf("Failed to remove old log file: %v", err)
+			}
+			return
+		} else {
+			if ENABLE_RAFT_LOG {
+				log.Printf("old log file removed")
+			}
 		}
-		return
 	}
 
 	file, err := os.Create(GOROUTINE_NUM_LOG_FILENAME)
@@ -139,6 +146,10 @@ func startCheckGoroutineNumTicker() {
 			log.Printf("Failed to create log file: %v", err)
 		}
 		return
+	} else {
+		if ENABLE_RAFT_LOG {
+			log.Printf("new log file created")
+		}
 	}
 
 	go func() {

@@ -123,9 +123,8 @@ func (ck *Clerk) doRequest(key string, value string, op string) string {
 	shard := key2shard(key)
 	xid := ck.xidGenerator.NextUid()
 	payload := SKVPayLoad{
-		ConfigNum: 0,
-		Key:       key,
-		Value:     value,
+		Key:   key,
+		Value: value,
 	}
 	logHeader := fmt.Sprintf("%sCk %d: xid %d: ",
 		ck.skvConfig.BC.LogPrefix, ck.Cid, xid)
@@ -140,7 +139,6 @@ func (ck *Clerk) doRequest(key string, value string, op string) string {
 			time.Sleep(ck.skvConfig.BC.TickerFrequency)
 			continue
 		}
-		payload.ConfigNum = ck.config.Num
 		ck.mu.Unlock()
 
 		replyValue := gck.DoRequest(&payload, op, xid, -1)

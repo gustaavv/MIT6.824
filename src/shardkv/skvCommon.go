@@ -27,21 +27,18 @@ const (
 )
 
 type SKVPayLoad struct {
-	ConfigNum int
-	Key       string
-	Value     string
+	Key   string
+	Value string
 }
 
 func (pl SKVPayLoad) String() string {
-	return fmt.Sprintf("SKVPayLoad{ConfigNum:%d, Key:%q, Value:%q}",
-		pl.ConfigNum, pl.Key, pl.Value)
+	return fmt.Sprintf("SKVPayLoad{Key:%q, Value:%q}", pl.Key, pl.Value)
 }
 
 func (pl SKVPayLoad) Clone() atopraft.ArgsPayLoad {
 	return &SKVPayLoad{
-		ConfigNum: pl.ConfigNum,
-		Key:       pl.Key,
-		Value:     pl.Value,
+		Key:   pl.Key,
+		Value: pl.Value,
 	}
 }
 

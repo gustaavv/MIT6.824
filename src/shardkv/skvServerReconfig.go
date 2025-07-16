@@ -156,7 +156,9 @@ func (kv *ShardKV) queryConfigAndUpdate() {
 		// 2. Communicate with other groups to get/send shards
 		// Only send inShards requests, not sending outShards proactively. Let other groups request their inShards,
 		// which are this group's outShards
+		log.Printf("%swait for inShard Data", logHeader)
 		result := kv.WaitUntilInSardData(inShards, logHeader)
+		log.Printf("%sget all inShard Data, result %v", logHeader, result)
 
 		if !result {
 			return
@@ -363,6 +365,8 @@ func (kv *ShardKV) WaitUntilInSardData(InShards []int, logHeader string) bool {
 							Status: RECONFIG_STATUS_PREPARE_SINGLE, InData: inData},
 					}
 					index, _, isLeader := kv.BaseServer.Rf.Start(args)
+					//log.Printf("%sstart PREPARE SINGLE entry, shard %d, index %d, isLeader %v",
+					//	logHeader, shard, index, isLeader)
 					if !isLeader {
 						success = false
 					} else {
@@ -373,6 +377,7 @@ func (kv *ShardKV) WaitUntilInSardData(InShards []int, logHeader string) bool {
 
 				if !success {
 					atomic.AddInt32(&failCount, 1)
+					log.Printf("%sget inShard data failed, shard %d", logHeader, shard)
 				}
 
 				wg.Done()
