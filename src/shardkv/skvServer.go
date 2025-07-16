@@ -174,17 +174,26 @@ func businessLogic(srv *atopraft.BaseServer, args atopraft.SrvArgs, reply *atopr
 			}
 			log.Printf("%sgroup %d: reConfig: (%d, START)", logHeader, skv.gid, store.ReConfigNum)
 		} else if store.ReConfigStatus == RECONFIG_STATUS_START &&
-			payload.Status == RECONFIG_STATUS_PREPARE &&
+			payload.Status == RECONFIG_STATUS_PREPARE_SINGLE &&
 			payload.Config.Num == store.ReConfigNum {
-			// apply inData (adding shards) when preparing
+			addedShards := make([]int, 0)
+			// adding shards when prepare single
 			for shardNum, shardDataReply := range payload.InData {
 				if _, ok := store.MyShards[shardNum]; ok {
-					log.Fatalf("")
+					continue // deduplicate
 				}
 				store.Data[shardNum] = atopraft.CloneStr2StrMap(shardDataReply.Data)
 				store.MyShards[shardNum] = true
 				srv.Session.Update(shardDataReply.ClientSessionList)
+				addedShards = append(addedShards, shardNum)
 			}
+			if len(addedShards) > 0 {
+				log.Printf("%sgroup %d: reConfig: (%d, START), PREPARE SINGLE for shards %v",
+					logHeader, skv.gid, store.ReConfigNum, addedShards)
+			}
+		} else if store.ReConfigStatus == RECONFIG_STATUS_START &&
+			payload.Status == RECONFIG_STATUS_PREPARE &&
+			payload.Config.Num == store.ReConfigNum {
 			store.ReConfigStatus = RECONFIG_STATUS_PREPARE
 			log.Printf("%sgroup %d: reConfig: (%d, PREPARE)", logHeader, skv.gid, store.ReConfigNum)
 		} else if store.ReConfigStatus == RECONFIG_STATUS_PREPARE &&

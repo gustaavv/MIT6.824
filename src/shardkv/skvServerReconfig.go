@@ -7,19 +7,23 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 const (
-	RECONFIG_STATUS_START   = 0
-	RECONFIG_STATUS_PREPARE = 1
-	RECONFIG_STATUS_COMMIT  = 2
+	RECONFIG_STATUS_START          = 0
+	RECONFIG_STATUS_PREPARE_SINGLE = 1
+	RECONFIG_STATUS_PREPARE        = 2
+	RECONFIG_STATUS_COMMIT         = 3
 )
 
 func mapReConfigStatusToString(status int) string {
 	switch status {
 	case RECONFIG_STATUS_START:
 		return "START"
+	case RECONFIG_STATUS_PREPARE_SINGLE:
+		return "PREPARE_SINGLE"
 	case RECONFIG_STATUS_PREPARE:
 		return "PREPARE"
 	case RECONFIG_STATUS_COMMIT:
@@ -118,7 +122,6 @@ func (kv *ShardKV) queryConfigAndUpdate() {
 		kv.skvConfig.BC.LogPrefix, kv.BaseServer.Sid, kv.gid, nextNum)
 
 	// Compute all information needed for the reConfig
-	//allGroups := merge2Groups(oldCfg.Groups, newCfg.Groups)
 	inShards, outShards, inGroups, outGroups := makeShardReConfigInfo(oldCfg, newCfg, kv.gid)
 	inGids := getGids(inGroups)
 	outGids := getGids(outGroups)
@@ -127,16 +130,11 @@ func (kv *ShardKV) queryConfigAndUpdate() {
 
 	if reConfigNum, reConfigStatus := kv.getReConfigTuple(); reConfigNum == oldCfg.Num &&
 		reConfigStatus == RECONFIG_STATUS_COMMIT {
-		// 1. make sure all groups achieve consensus that they are in the same config
-		log.Printf("%swait for inGroups %v to be at least (%d, COMMIT)", logHeader, inGids, oldCfg.Num)
-		kv.WaitUntilReConfigConsensus(oldCfg.Num, RECONFIG_STATUS_COMMIT, inGroups)
-		log.Printf("%sall inGroups %v are at least (%d, COMMIT)", logHeader, inGids, oldCfg.Num)
-
 		if !kv.BaseServer.CheckLeader() {
 			return
 		}
 
-		// 2. Start a new log entry to mark the start of the reConfig
+		// 1. Start a new log entry to mark the start of the reConfig
 		args := atopraft.SrvArgs{
 			Cid: -1, Xid: -1, Tid: -1, Op: "",
 			PayLoad: ReConfigPayLoad{Config: shardctrler.Config{Num: newCfg.Num}, Status: RECONFIG_STATUS_START,
@@ -155,15 +153,19 @@ func (kv *ShardKV) queryConfigAndUpdate() {
 
 	if reConfigNum, reConfigStatus := kv.getReConfigTuple(); reConfigNum == nextNum &&
 		reConfigStatus == RECONFIG_STATUS_START {
-		// 3. Communicate with other groups to get/send shards
+		// 2. Communicate with other groups to get/send shards
 		// Only send inShards requests, not sending outShards proactively. Let other groups request their inShards,
 		// which are this group's outShards
-		inData := kv.WaitUntilInSardData(inShards)
+		result := kv.WaitUntilInSardData(inShards, logHeader)
 
-		// 4. prepare
+		if !result {
+			return
+		}
+
+		// 3. prepare
 		args := atopraft.SrvArgs{
 			Cid: -1, Xid: -1, Tid: -1, Op: "",
-			PayLoad: ReConfigPayLoad{Config: shardctrler.Config{Num: newCfg.Num}, Status: RECONFIG_STATUS_PREPARE, InData: inData},
+			PayLoad: ReConfigPayLoad{Config: shardctrler.Config{Num: newCfg.Num}, Status: RECONFIG_STATUS_PREPARE},
 		}
 		index, _, isLeader := kv.BaseServer.Rf.Start(args)
 		if !isLeader {
@@ -183,7 +185,7 @@ func (kv *ShardKV) queryConfigAndUpdate() {
 		kv.WaitUntilReConfigConsensus(nextNum, RECONFIG_STATUS_PREPARE, outGroups)
 		log.Printf("%sall outGroups %v are at least (%d, PREPARE)", logHeader, outGids, nextNum)
 
-		// 5. commit
+		// 4. commit
 		args := atopraft.SrvArgs{
 			Cid: -1, Xid: -1, Tid: -1, Op: "",
 			PayLoad: ReConfigPayLoad{Config: newCfg, Status: RECONFIG_STATUS_COMMIT, OutShards: outShards},
@@ -332,53 +334,7 @@ func makeShardReConfigInfo(
 	return
 }
 
-func getSubGroups(groups map[int][]string, gids []int) map[int][]string {
-	ans := make(map[int][]string)
-
-	for _, gid := range gids {
-		if servers, ok := groups[gid]; ok {
-			ans[gid] = servers
-		} else {
-			panic("")
-		}
-
-	}
-
-	return ans
-}
-
-func merge2Groups(oldGroups map[int][]string, newGroups map[int][]string) map[int][]string {
-	ans := make(map[int][]string)
-
-	for gid, servers := range oldGroups {
-		ans[gid] = make([]string, len(servers))
-		copy(ans[gid], servers)
-	}
-
-	for gid, servers := range newGroups {
-		if _, ok := oldGroups[gid]; !ok {
-			ans[gid] = make([]string, len(servers))
-			copy(ans[gid], servers)
-		} else {
-			for _, server := range servers {
-				existed := false
-				for _, oldServer := range oldGroups[gid] {
-					if oldServer == server {
-						existed = true
-						break
-					}
-				}
-				if !existed {
-					ans[gid] = append(ans[gid], server)
-				}
-			}
-		}
-	}
-
-	return ans
-}
-
-func (kv *ShardKV) WaitUntilInSardData(InShards []int) map[int]GetShardDataReply {
+func (kv *ShardKV) WaitUntilInSardData(InShards []int, logHeader string) bool {
 	kv.BaseServer.Mu.Lock()
 	store := kv.BaseServer.Store.(SKVStore)
 	reConfigNum := store.ReConfigNum
@@ -386,23 +342,48 @@ func (kv *ShardKV) WaitUntilInSardData(InShards []int) map[int]GetShardDataReply
 	shards := store.Config.Shards
 	kv.BaseServer.Mu.Unlock()
 
-	ans := make(map[int]GetShardDataReply)
-	var ansMu sync.Mutex
+	var failCount int32 = 0
 	var wg sync.WaitGroup
 	wg.Add(len(InShards))
 
 	for _, shard := range InShards {
 		shard := shard
 		go func() {
+			var ans *GetShardDataReply = nil
+			defer func() {
+				success := true
+				if !(ans != nil && ans.Success) {
+					success = false
+				} else {
+					inData := make(map[int]GetShardDataReply)
+					inData[shard] = *ans
+					args := atopraft.SrvArgs{
+						Cid: -1, Xid: -1, Tid: -1, Op: "",
+						PayLoad: ReConfigPayLoad{Config: shardctrler.Config{Num: reConfigNum},
+							Status: RECONFIG_STATUS_PREPARE_SINGLE, InData: inData},
+					}
+					index, _, isLeader := kv.BaseServer.Rf.Start(args)
+					if !isLeader {
+						success = false
+					} else {
+						kv.BaseServer.WaitUntilEntryConsumed(index)
+						log.Printf("%sPREPARE SINGLE entry consumed, shard %d", logHeader, shard)
+					}
+				}
+
+				if !success {
+					atomic.AddInt32(&failCount, 1)
+				}
+
+				wg.Done()
+			}()
+
 			if shards[shard] == 0 {
-				ansMu.Lock()
-				ans[shard] = GetShardDataReply{
+				ans = &GetShardDataReply{
 					Success:           true,
 					Data:              make(map[string]string),
 					ClientSessionList: make([]atopraft.ClientSessionTemp, 0),
 				}
-				ansMu.Unlock()
-				wg.Done()
 				return
 			}
 
@@ -428,11 +409,8 @@ func (kv *ShardKV) WaitUntilInSardData(InShards []int) map[int]GetShardDataReply
 						continue
 					}
 
-					ansMu.Lock()
-					ans[shard] = *reply
-					ansMu.Unlock()
+					ans = reply
 					loop = false
-					wg.Done()
 					break
 				}
 				time.Sleep(kv.skvConfig.SrvRPCFrequency)
@@ -440,7 +418,7 @@ func (kv *ShardKV) WaitUntilInSardData(InShards []int) map[int]GetShardDataReply
 		}()
 	}
 	wg.Wait()
-	return ans
+	return failCount == 0
 }
 
 type GetShardDataArgs struct {
