@@ -28,7 +28,8 @@ func makeSKVConfig() *SKVConfig {
 	baseConfig := atopraft.NewBaseConfig()
 	baseConfig.LogPrefix = "SKV"
 	baseConfig.EnableCheckStatusTicker = false
-	baseConfig.QueryServerStatusFrequency = 500 * time.Millisecond
+	baseConfig.QueryServerStatusFrequency = 700 * time.Millisecond
+	baseConfig.RequestTimeout = 1000 * time.Millisecond
 
 	return &SKVConfig{
 		BC:                      baseConfig,
@@ -36,6 +37,6 @@ func makeSKVConfig() *SKVConfig {
 		SrvRPCFrequency:         time.Millisecond * 2,
 		EnableRPCLog:            false,
 		returnValueForAppend:    false,
-		CkQueryConfigFrequency:  time.Millisecond * 50,
+		CkQueryConfigFrequency:  time.Millisecond * 100,
 	}
 }
