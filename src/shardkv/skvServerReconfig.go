@@ -135,12 +135,12 @@ func (kv *ShardKV) queryConfigAndUpdate() {
 		if !kv.BaseServer.CheckLeader() {
 			return
 		}
-		kv.BaseServer.SetUnavailable() // drain all log entries unconsumed
 
 		// 2. Start a new log entry to mark the start of the reConfig
 		args := atopraft.SrvArgs{
 			Cid: -1, Xid: -1, Tid: -1, Op: "",
-			PayLoad: ReConfigPayLoad{Config: shardctrler.Config{Num: newCfg.Num}, Status: RECONFIG_STATUS_START},
+			PayLoad: ReConfigPayLoad{Config: shardctrler.Config{Num: newCfg.Num}, Status: RECONFIG_STATUS_START,
+				OutShards: outShards},
 		}
 		index, _, isLeader := kv.BaseServer.Rf.Start(args)
 		if !isLeader {
@@ -201,7 +201,6 @@ func (kv *ShardKV) queryConfigAndUpdate() {
 
 	if reConfigNum, reConfigStatus := kv.getReConfigTuple(); reConfigNum == nextNum &&
 		reConfigStatus == RECONFIG_STATUS_COMMIT {
-		kv.BaseServer.SetAvailable()
 		log.Printf("%sreConfig succeeds", logHeader)
 	} else {
 		log.Printf("%swarn: srv is at (%d, %s)",
@@ -487,12 +486,9 @@ func (kv *ShardKV) GetShardData(args *GetShardDataArgs, reply *GetShardDataReply
 	kv.BaseServer.Mu.Lock()
 	defer kv.BaseServer.Mu.Unlock()
 
-	if _, ok := kv.BaseServer.Store.(SKVStore).MyShards[args.Shard]; !ok {
-		reply.Success = false
-		return
-	}
-
-	// We do not verify whether the requester should get data in this reConfig
+	// We do not verify whether the requester should get data in this reConfig,
+	/// nor do we check whether this shard belongs to this server.
+	// it's all up to the requester to make things correct
 
 	reply.Success = true
 	reply.Data = kv.CloneShard(args.Shard)

@@ -12,7 +12,8 @@ import "6.824/raft"
 import "6.824/labgob"
 
 type SKVStore struct {
-	Data           [shardctrler.NShards]map[string]string
+	Data [shardctrler.NShards]map[string]string
+	// this field is used to check client requests, not for checking server requests
 	MyShards       map[int]bool
 	ReConfigStatus int
 	ReConfigNum    int
@@ -128,14 +129,6 @@ func businessLogic(srv *atopraft.BaseServer, args atopraft.SrvArgs, reply *atopr
 		if _, ok := store.MyShards[shard]; !ok {
 			reply.Success = false
 			reply.Msg = MSG_NOT_MY_SHARD
-			log.Fatalf("")
-			return
-		}
-
-		if payload.ConfigNum != store.Config.Num {
-			reply.Success = false
-			reply.Msg = MSG_CONFIG_NUM_MISMATCH
-			log.Fatalf("")
 			return
 		}
 
@@ -173,8 +166,12 @@ func businessLogic(srv *atopraft.BaseServer, args atopraft.SrvArgs, reply *atopr
 			// new config
 			store.ReConfigNum++
 			store.ReConfigStatus = RECONFIG_STATUS_START
-			store.SkvUnavailable = true
-			srv.SetUnavailable()
+			for _, shardNum := range payload.OutShards {
+				if _, ok := store.MyShards[shardNum]; !ok {
+					log.Fatalf("")
+				}
+				delete(store.MyShards, shardNum)
+			}
 			log.Printf("%sgroup %d: reConfig: (%d, START)", logHeader, skv.gid, store.ReConfigNum)
 		} else if store.ReConfigStatus == RECONFIG_STATUS_START &&
 			payload.Status == RECONFIG_STATUS_PREPARE &&
@@ -193,18 +190,12 @@ func businessLogic(srv *atopraft.BaseServer, args atopraft.SrvArgs, reply *atopr
 		} else if store.ReConfigStatus == RECONFIG_STATUS_PREPARE &&
 			payload.Status == RECONFIG_STATUS_COMMIT &&
 			payload.Config.Num == store.ReConfigNum {
-			// apply outData (delete shards) when commiting
+			// delete shards when commiting
 			for _, shardNum := range payload.OutShards {
-				if _, ok := store.MyShards[shardNum]; !ok {
-					log.Fatalf("")
-				}
-				delete(store.MyShards, shardNum)
 				store.Data[shardNum] = make(map[string]string)
 			}
 			store.Config = payload.Config
 			store.ReConfigStatus = RECONFIG_STATUS_COMMIT
-			store.SkvUnavailable = false
-			srv.SetAvailable()
 			log.Printf("%sgroup %d: reConfig: (%d, COMMIT)", logHeader, skv.gid, store.ReConfigNum)
 		} else {
 			// TODO log warning?
@@ -240,18 +231,6 @@ func validateRequest(srv *atopraft.BaseServer, args *atopraft.SrvArgs, reply *at
 	defer srv.Mu.Unlock()
 
 	payload := args.PayLoad.(SKVPayLoad)
-
-	//if payload.ConfigNum > atopSrv.config.Num {
-	//	go func() {
-	//		atopSrv.queryConfigAndUpdate()
-	//	}()
-	//}
-
-	if payload.ConfigNum != srv.Store.(SKVStore).Config.Num {
-		reply.Success = false
-		reply.Msg = MSG_CONFIG_NUM_MISMATCH
-		return false
-	}
 
 	if _, ok := srv.Store.(SKVStore).MyShards[key2shard(payload.Key)]; !ok {
 		reply.Success = false
