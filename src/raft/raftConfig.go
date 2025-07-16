@@ -70,7 +70,7 @@ const AE_CONFLICT_RETRIES = 5
 var configLock sync.Mutex
 var logInited = false
 
-func configLog() {
+func ConfigLog() {
 	configLock.Lock()
 	defer configLock.Unlock()
 	if logInited {

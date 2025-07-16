@@ -118,21 +118,19 @@ func (kv *ShardKV) queryConfigAndUpdate() {
 		kv.skvConfig.BC.LogPrefix, kv.BaseServer.Sid, kv.gid, nextNum)
 
 	// Compute all information needed for the reConfig
-	allGroups := merge2Groups(oldCfg.Groups, newCfg.Groups)
-	inShards, outShards := makeShardReConfigInfo(oldCfg.Shards, newCfg.Shards, kv.gid)
-	hasInShards := len(inShards) > 0
-	hasOutShards := len(outShards) > 0
-	log.Printf("%sreConfig info: groups: %v, inShards: %v, outShards: %v, newCfg: %s",
-		logHeader, getGids(allGroups), inShards, outShards, newCfg.String())
+	//allGroups := merge2Groups(oldCfg.Groups, newCfg.Groups)
+	inShards, outShards, inGroups, outGroups := makeShardReConfigInfo(oldCfg, newCfg, kv.gid)
+	inGids := getGids(inGroups)
+	outGids := getGids(outGroups)
+	log.Printf("%sreConfig info: inShards: %v, inGroups: %v, outShards: %v, outGroups: %v, newCfg: %s",
+		logHeader, inShards, inGids, outShards, outGids, newCfg.String())
 
 	if reConfigNum, reConfigStatus := kv.getReConfigTuple(); reConfigNum == oldCfg.Num &&
 		reConfigStatus == RECONFIG_STATUS_COMMIT {
-		if hasInShards || hasOutShards {
-			// 1. make sure all groups achieve consensus that they are in the same config
-			log.Printf("%swait for other groups to be at least (%d, COMMIT)", logHeader, oldCfg.Num)
-			kv.WaitUntilReConfigConsensus(oldCfg.Num, RECONFIG_STATUS_COMMIT, allGroups)
-			log.Printf("%sall other groups are at least (%d, COMMIT)", logHeader, oldCfg.Num)
-		}
+		// 1. make sure all groups achieve consensus that they are in the same config
+		log.Printf("%swait for inGroups %v to be at least (%d, COMMIT)", logHeader, inGids, oldCfg.Num)
+		kv.WaitUntilReConfigConsensus(oldCfg.Num, RECONFIG_STATUS_COMMIT, inGroups)
+		log.Printf("%sall inGroups %v are at least (%d, COMMIT)", logHeader, inGids, oldCfg.Num)
 
 		if !kv.BaseServer.CheckLeader() {
 			return
@@ -180,12 +178,10 @@ func (kv *ShardKV) queryConfigAndUpdate() {
 
 	if reConfigNum, reConfigStatus := kv.getReConfigTuple(); reConfigNum == nextNum &&
 		reConfigStatus == RECONFIG_STATUS_PREPARE {
-		if hasOutShards {
-			// if all other groups are prepared, then sending outShards succeeds.
-			log.Printf("%swait for other groups to be at least (%d, PREPARE)", logHeader, nextNum)
-			kv.WaitUntilReConfigConsensus(nextNum, RECONFIG_STATUS_PREPARE, allGroups)
-			log.Printf("%sall other groups are at least (%d, PREPARE)", logHeader, nextNum)
-		}
+		// if all outGroups are prepared, then sending outShards succeeds.
+		log.Printf("%swait for outGroups %v to be at least (%d, PREPARE)", logHeader, outGids, nextNum)
+		kv.WaitUntilReConfigConsensus(nextNum, RECONFIG_STATUS_PREPARE, outGroups)
+		log.Printf("%sall outGroups %v are at least (%d, PREPARE)", logHeader, outGids, nextNum)
 
 		// 5. commit
 		args := atopraft.SrvArgs{
@@ -226,14 +222,19 @@ func getGids(groups map[int][]string) []int {
 }
 
 // WaitUntilReConfigConsensus other groups' (num, status) should >= parameters' (num, status)
-func (kv *ShardKV) WaitUntilReConfigConsensus(num int, status int, allGroups map[int][]string) {
+func (kv *ShardKV) WaitUntilReConfigConsensus(num int, status int, groups map[int][]string) {
 	var wg sync.WaitGroup
-	wg.Add(len(allGroups) - 1) // exclude kv's group
-	if _, ok := allGroups[kv.gid]; !ok {
-		wg.Add(1)
+
+	wgCount := len(groups) - 1
+	if _, ok := groups[kv.gid]; !ok {
+		wgCount++
 	}
 
-	for gid, servers := range allGroups {
+	if wgCount >= 0 {
+		wg.Add(wgCount)
+	}
+
+	for gid, servers := range groups {
 		if gid == kv.gid {
 			continue
 		}
@@ -305,25 +306,46 @@ func (kv *ShardKV) ReConfigStatus(args *ReConfigStatusArgs, reply *ReConfigStatu
 	reply.Num, reply.Status = kv.getReConfigTuple()
 }
 
-// makeShardReConfigInfo
 // inShards are the shards this group needs in the new config
+//
 // outShards are the shards this group does not need in the new config
 func makeShardReConfigInfo(
-	oldShard [shardctrler.NShards]int,
-	newShard [shardctrler.NShards]int,
-	gid int) (inShards []int, outShards []int) {
+	oldCfg shardctrler.Config,
+	newCfg shardctrler.Config,
+	gid int) (inShards []int, outShards []int, inGroups map[int][]string, outGroups map[int][]string) {
 	inShards = make([]int, 0)
 	outShards = make([]int, 0)
+	inGroups = make(map[int][]string)
+	outGroups = make(map[int][]string)
 
 	for i := 0; i < shardctrler.NShards; i++ {
-		if oldShard[i] == gid && newShard[i] != gid {
+		if oldCfg.Shards[i] == gid && newCfg.Shards[i] != gid {
 			outShards = append(outShards, i)
-		} else if oldShard[i] != gid && newShard[i] == gid {
+			outGroups[newCfg.Shards[i]] = newCfg.Groups[newCfg.Shards[i]]
+		} else if oldCfg.Shards[i] != gid && newCfg.Shards[i] == gid {
 			inShards = append(inShards, i)
+			if oldCfg.Shards[i] != 0 {
+				inGroups[oldCfg.Shards[i]] = oldCfg.Groups[oldCfg.Shards[i]]
+			}
 		}
 	}
 
 	return
+}
+
+func getSubGroups(groups map[int][]string, gids []int) map[int][]string {
+	ans := make(map[int][]string)
+
+	for _, gid := range gids {
+		if servers, ok := groups[gid]; ok {
+			ans[gid] = servers
+		} else {
+			panic("")
+		}
+
+	}
+
+	return ans
 }
 
 func merge2Groups(oldGroups map[int][]string, newGroups map[int][]string) map[int][]string {
@@ -360,7 +382,6 @@ func merge2Groups(oldGroups map[int][]string, newGroups map[int][]string) map[in
 func (kv *ShardKV) WaitUntilInSardData(InShards []int) map[int]GetShardDataReply {
 	kv.BaseServer.Mu.Lock()
 	store := kv.BaseServer.Store.(SKVStore)
-	configNum := store.Config.Num
 	reConfigNum := store.ReConfigNum
 	groups := store.Config.Groups
 	shards := store.Config.Shards
@@ -397,7 +418,6 @@ func (kv *ShardKV) WaitUntilInSardData(InShards []int) map[int]GetShardDataReply
 				for _, end := range ends {
 					args := new(GetShardDataArgs)
 					args.Sid = kv.BaseServer.Sid
-					args.ConfigNum = configNum
 					args.Shard = shard
 					// the servers return their shards to this kv should be at least (reConfigNum, START)
 					args.ReConfigNum = reConfigNum
@@ -426,15 +446,14 @@ func (kv *ShardKV) WaitUntilInSardData(InShards []int) map[int]GetShardDataReply
 
 type GetShardDataArgs struct {
 	Sid            int
-	ConfigNum      int
 	Shard          int
 	ReConfigNum    int
 	ReConfigStatus int
 }
 
 func (args *GetShardDataArgs) String() string {
-	return fmt.Sprintf("GetShardDataArgs{Sid:%d, ConfigNum:%d, Shard:%d}",
-		args.Sid, args.ConfigNum, args.Shard)
+	return fmt.Sprintf("GetShardDataArgs{Sid:%d, Shard:%d, ReConfigNum:%d, ReConfigStatus:%s}",
+		args.Sid, args.Shard, args.ReConfigNum, mapReConfigStatusToString(args.ReConfigStatus))
 }
 
 type GetShardDataReply struct {

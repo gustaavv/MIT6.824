@@ -205,7 +205,6 @@ func businessLogic(srv *atopraft.BaseServer, args atopraft.SrvArgs, reply *atopr
 			store.ReConfigStatus = RECONFIG_STATUS_COMMIT
 			store.SkvUnavailable = false
 			srv.SetAvailable()
-			log.Printf("%sstoreData: %v", logHeader, store.Data)
 			log.Printf("%sgroup %d: reConfig: (%d, COMMIT)", logHeader, skv.gid, store.ReConfigNum)
 		} else {
 			// TODO log warning?

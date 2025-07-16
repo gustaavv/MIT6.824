@@ -466,7 +466,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.me = me
 	rf.applyCh = applyCh
 	// Your initialization code here (2A, 2B, 2C).
-	configLog()
+	ConfigLog()
 	startCheckGoroutineNumTicker()
 	validateLogBacktrackingMode()
 

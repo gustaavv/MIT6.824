@@ -19,6 +19,7 @@ const linearizabilityCheckTimeout = 1 * time.Second
 
 func out(s string) {
 	if raft.ENABLE_TEST_VERBOSE {
+		raft.ConfigLog()
 		log.Println(s)
 	}
 }
@@ -34,6 +35,8 @@ func check(t *testing.T, ck *Clerk, key string, value string) {
 // test static 2-way sharding, without shard movement.
 //
 func TestStaticShards(t *testing.T) {
+	out("======================================================")
+	out("TestStaticShards")
 	fmt.Printf("Test: static shards ...\n")
 
 	cfg := make_config(t, 3, false, -1)
@@ -108,6 +111,8 @@ func TestStaticShards(t *testing.T) {
 
 func TestJoinLeave(t *testing.T) {
 	fmt.Printf("Test: join then leave ...\n")
+	out("======================================================")
+	out("TestJoinLeave")
 
 	cfg := make_config(t, 3, false, -1)
 	defer cfg.cleanup()
@@ -162,6 +167,8 @@ func TestJoinLeave(t *testing.T) {
 
 func TestSnapshot(t *testing.T) {
 	fmt.Printf("Test: snapshots, join, and leave ...\n")
+	out("======================================================")
+	out("TestSnapshot")
 
 	cfg := make_config(t, 3, false, 1000)
 	defer cfg.cleanup()
@@ -230,6 +237,8 @@ func TestSnapshot(t *testing.T) {
 
 func TestMissChange(t *testing.T) {
 	fmt.Printf("Test: servers miss configuration changes...\n")
+	out("======================================================")
+	out("TestMissChange")
 
 	cfg := make_config(t, 3, false, 1000)
 	defer cfg.cleanup()
@@ -316,6 +325,8 @@ func TestMissChange(t *testing.T) {
 
 func TestConcurrent1(t *testing.T) {
 	fmt.Printf("Test: concurrent puts and configuration changes...\n")
+	out("======================================================")
+	out("TestConcurrent1")
 
 	cfg := make_config(t, 3, false, 100)
 	defer cfg.cleanup()
@@ -398,6 +409,8 @@ func TestConcurrent1(t *testing.T) {
 //
 func TestConcurrent2(t *testing.T) {
 	fmt.Printf("Test: more concurrent puts and configuration changes...\n")
+	out("======================================================")
+	out("TestConcurrent2")
 
 	cfg := make_config(t, 3, false, -1)
 	defer cfg.cleanup()
@@ -469,6 +482,8 @@ func TestConcurrent2(t *testing.T) {
 
 func TestConcurrent3(t *testing.T) {
 	fmt.Printf("Test: concurrent configuration change and restart...\n")
+	out("======================================================")
+	out("TestConcurrent3")
 
 	cfg := make_config(t, 3, false, 300)
 	defer cfg.cleanup()
@@ -553,6 +568,8 @@ func TestConcurrent3(t *testing.T) {
 
 func TestUnreliable1(t *testing.T) {
 	fmt.Printf("Test: unreliable 1...\n")
+	out("======================================================")
+	out("TestUnreliable1")
 
 	cfg := make_config(t, 3, true, 100)
 	defer cfg.cleanup()
@@ -595,6 +612,8 @@ func TestUnreliable1(t *testing.T) {
 
 func TestUnreliable2(t *testing.T) {
 	fmt.Printf("Test: unreliable 2...\n")
+	out("======================================================")
+	out("TestUnreliable2")
 
 	cfg := make_config(t, 3, true, 100)
 	defer cfg.cleanup()
@@ -670,6 +689,8 @@ func TestUnreliable2(t *testing.T) {
 
 func TestUnreliable3(t *testing.T) {
 	fmt.Printf("Test: unreliable 3...\n")
+	out("======================================================")
+	out("TestUnreliable3")
 
 	cfg := make_config(t, 3, true, 100)
 	defer cfg.cleanup()
@@ -779,6 +800,8 @@ func TestUnreliable3(t *testing.T) {
 //
 func TestChallenge1Delete(t *testing.T) {
 	fmt.Printf("Test: shard deletion (challenge 1) ...\n")
+	out("======================================================")
+	out("TestChallenge1Delete")
 
 	// "1" means force snapshot after every log entry.
 	cfg := make_config(t, 3, false, 1)
@@ -787,6 +810,7 @@ func TestChallenge1Delete(t *testing.T) {
 	ck := cfg.makeClient()
 
 	cfg.join(0)
+	out("t0")
 
 	// 30,000 bytes of total values.
 	n := 30
@@ -797,41 +821,56 @@ func TestChallenge1Delete(t *testing.T) {
 		va[i] = randstring(1000)
 		ck.Put(ka[i], va[i])
 	}
+	out("t1")
 	for i := 0; i < 3; i++ {
 		check(t, ck, ka[i], va[i])
 	}
-
+	out("t2")
 	for iters := 0; iters < 2; iters++ {
 		cfg.join(1)
+		out(fmt.Sprintf("t2:%d:1: join 1", iters))
 		cfg.leave(0)
+		out(fmt.Sprintf("t2:%d:1: leave 0", iters))
 		cfg.join(2)
+		out(fmt.Sprintf("t2:%d:1: join 2", iters))
 		time.Sleep(3 * time.Second)
 		for i := 0; i < 3; i++ {
 			check(t, ck, ka[i], va[i])
 		}
+		out(fmt.Sprintf("t2:%d:1: check1", iters))
 		cfg.leave(1)
+		out(fmt.Sprintf("t2:%d:1: leave 1", iters))
 		cfg.join(0)
+		out(fmt.Sprintf("t2:%d:1: join 0", iters))
 		cfg.leave(2)
+		out(fmt.Sprintf("t2:%d:1: join 2", iters))
 		time.Sleep(3 * time.Second)
 		for i := 0; i < 3; i++ {
 			check(t, ck, ka[i], va[i])
 		}
+		out(fmt.Sprintf("t2:%d:1: check2", iters))
 	}
 
+	out("t3")
 	cfg.join(1)
+	out("t4")
 	cfg.join(2)
+	out("t5")
 	time.Sleep(1 * time.Second)
 	for i := 0; i < 3; i++ {
 		check(t, ck, ka[i], va[i])
 	}
+	out("t6")
 	time.Sleep(1 * time.Second)
 	for i := 0; i < 3; i++ {
 		check(t, ck, ka[i], va[i])
 	}
+	out("t7")
 	time.Sleep(1 * time.Second)
 	for i := 0; i < 3; i++ {
 		check(t, ck, ka[i], va[i])
 	}
+	out("t8")
 
 	total := 0
 	for gi := 0; gi < cfg.ngroups; gi++ {
@@ -841,6 +880,7 @@ func TestChallenge1Delete(t *testing.T) {
 			total += raft + snap
 		}
 	}
+	out("t9")
 
 	// 27 keys should be stored once.
 	// 3 keys should also be stored in client dup tables.
@@ -854,6 +894,7 @@ func TestChallenge1Delete(t *testing.T) {
 	for i := 0; i < n; i++ {
 		check(t, ck, ka[i], va[i])
 	}
+	out("t10")
 
 	fmt.Printf("  ... Passed\n")
 }
@@ -865,6 +906,8 @@ func TestChallenge1Delete(t *testing.T) {
 //
 func TestChallenge2Unaffected(t *testing.T) {
 	fmt.Printf("Test: unaffected shard access (challenge 2) ...\n")
+	out("======================================================")
+	out("TestChallenge2Unaffected")
 
 	cfg := make_config(t, 3, true, 100)
 	defer cfg.cleanup()
@@ -935,6 +978,8 @@ func TestChallenge2Unaffected(t *testing.T) {
 //
 func TestChallenge2Partial(t *testing.T) {
 	fmt.Printf("Test: partial migration shard access (challenge 2) ...\n")
+	out("======================================================")
+	out("TestChallenge2Partial")
 
 	cfg := make_config(t, 3, true, 100)
 	defer cfg.cleanup()
