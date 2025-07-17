@@ -79,9 +79,6 @@ jobs:
             testCasesArg="-run ${{ github.event.inputs.testcase }}"
           fi
 
-          command="time go test $testCasesArg $raceArg"
-          echo "Running command: $command"
-
           # https://stackoverflow.com/a/78924711
           set +e
           cd src/${{ github.event.inputs.subfolder }}
@@ -90,7 +87,7 @@ jobs:
             echo "Round $i:"
             rm -f app.log
 
-            $command
+            time go test $testCasesArg $raceArg
 
             ret=$?
             echo "Max goroutine num during execution: `sort -nr goroutine_num_xxafbnlassfb.log | head -n 1`"
