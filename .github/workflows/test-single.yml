@@ -44,6 +44,14 @@ on:
           - "150"
           - "175"
           - "200"
+      useRaceDectector:
+        description: "whether to use -race flag"
+        required: true
+        type: choice
+        default: "enabled"
+        options:
+          - "enabled"
+          - "disabled"
 
 jobs:
   test:
@@ -61,6 +69,19 @@ jobs:
       - name: Run tests
         shell: bash
         run: |
+          raceArg=""
+          if ["${{ github.event.inputs.useRaceDectector }}" = "enabled"]; then
+            raceArg="-race"
+          fi
+
+          testCasesArg=""
+          if [ "${{ github.event.inputs.testcase }}" != "All" ]; then
+            testCasesArg="-run ${{ github.event.inputs.testcase }}"
+          fi
+
+          command="time go test $testCasesArg $raceArg"
+          echo "Running command: $command"
+
           # https://stackoverflow.com/a/78924711
           set +e
           cd src/${{ github.event.inputs.subfolder }}
@@ -69,11 +90,7 @@ jobs:
             echo "Round $i:"
             rm -f app.log
 
-            if [ "${{ github.event.inputs.testcase }}" = "All" ]; then
-              time go test -race
-            else
-              time go test -run ${{ github.event.inputs.testcase }} -race
-            fi
+            $command
 
             ret=$?
             echo "Max goroutine num during execution: `sort -nr goroutine_num_xxafbnlassfb.log | head -n 1`"
