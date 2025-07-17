@@ -48,10 +48,10 @@ on:
         description: "whether to use -race flag"
         required: true
         type: choice
-        default: "enabled"
+        default: "Yes"
         options:
-          - "enabled"
-          - "disabled"
+          - "Yes"
+          - "No"
 
 jobs:
   test:
@@ -70,7 +70,7 @@ jobs:
         shell: bash
         run: |
           raceArg=""
-          if [ "${{ github.event.inputs.useRaceDectector }}" = "enabled" ]; then
+          if [ "${{ github.event.inputs.useRaceDectector }}" = "Yes" ]; then
             raceArg="-race"
           fi
 
