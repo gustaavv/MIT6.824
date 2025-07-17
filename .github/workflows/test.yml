@@ -1,11 +1,11 @@
 name: "Run lab tests: all"
 
 on:
-  # push:
-  #   branches:
-  #     - master
-  #   paths:
-  #     - "src/**"
+  push:
+    branches:
+      - master
+    paths:
+      - "src/**"
   workflow_dispatch:
 
 jobs:
@@ -35,7 +35,7 @@ jobs:
           - name: Lab 4A
             command: cd src/shardctrler && time go test -race
           - name: Lab 4B
-            command: cd src/shardkv && time go test -race
+            command: cd src/shardkv && time go test # can not set -race when testing lab 4b on GitHub Actions
 
       fail-fast: false
 

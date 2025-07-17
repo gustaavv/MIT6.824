@@ -79,6 +79,9 @@ jobs:
             testCasesArg="-run ${{ github.event.inputs.testcase }}"
           fi
 
+          command="time go test $testCasesArg $raceArg"
+          echo "Running command: $command"
+
           # https://stackoverflow.com/a/78924711
           set +e
           cd src/${{ github.event.inputs.subfolder }}
