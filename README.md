@@ -18,5 +18,7 @@ Checkout the corresponding tag to see the final code of each lab.
 | Lab 3B | K/V service with snapshots    | `lab3b` tag | ✅                | [lab3b.md](./report/lab3b.md) |
 | Lab 3  | Fault-tolerant K/V service    | `lab3` tag  | ✅                |                               |
 | Lab 4A | Shard controller              | `lab4a` tag | ✅                | [lab4a.md](./report/lab4a.md) |
+| Lab 4B | Sharded K/V Server            | `lab4b` tag | ✅                | [lab4b.md](./report/lab4b.md) |
+| Lab 4  | Sharded K/V Service           | `lab4` tag  | ✅                |                               |
 
 You can run the tests by running GitHub Action workflows after forking this repository.
